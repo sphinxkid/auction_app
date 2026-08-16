@@ -40,13 +40,9 @@ INSERT INTO guild_members (id, name, discord_id, class_id, gvg_build) VALUES
 -- 3. ITEMS CATALOG
 -- ============================================================================
 INSERT INTO items (id, name, description, is_repeatable) VALUES
-(1, 'Primordial Essence', 'Concentrated elemental reagent used for crafting legendary raid gear.', 1),
-(2, 'Dragon Scale', 'Hardened scale harvested from ancient drake bosses, ideal for plate & mail armor.', 1),
-(3, 'Thunderfury, Blessed Blade of the Windseeker', 'Legendary sword imbued with tempest lightning power.', 1),
-(4, 'Sulfuras, Hand of Ragnaros', 'Mighty elemental hammer forged in molten magma core.', 1),
-(5, 'Ashkandi, Greatsword of the Red Dragonflight', 'Massive greatsword adorned with dragon head pommel.', 1),
-(6, 'Drake Fang Talisman', 'Ancient talisman granting immense physical combat prowess.', 1),
-(7, 'Netherwind Crown', 'Arcane tiara pulsating with ethereal nether energy.', 1),
-(8, 'Staff of Domination', 'High sorcerer staff amplifying elemental spell power.', 1),
-(9, 'Judgement Breastplate', 'Holy paladin armor radiating divine aura.', 1),
-(10, 'Band of Accuria', 'Precision ring enhancing hit accuracy and critical striking.', 1);
+(1, "Traveler's Note", 'Notes taken on the road. Used to upgrade Titles or fuse into advanced Title items.', 1),
+(2, 'Adventure Fragment', "Precious notes from your expedictions. Used to upgrade Titles or fuse into advanced Title items. Breaks down into 4x Traveler's Note", 1),
+(3, 'Adventure Journal', 'A compilation of insights from countless journeys. Used to upgrade Titles or fuse into advanced Title items. Breaks down into 4x Adventure Fragment.', 1),
+(4, 'Pioneer Certificate', 'Pioneer Certificate', 1),
+(5, 'Adv. Gem Box', 'Adv. Gem Box', 1),
+(6, 'Super Gem Box', 'Super Gem Box', 1),
