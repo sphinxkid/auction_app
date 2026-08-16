@@ -113,53 +113,33 @@ func SeedDatabase(db *gorm.DB) error {
 	// 2. Seed Repeatable Raid Items
 	items := []models.Item{
 		{
-			Name:         "Primordial Essence",
-			Description:  "Concentrated elemental reagent used for crafting legendary raid gear.",
+			Name:         "Traveler's Note",
+			Description:  "Notes taken on the road. Used to upgrade Titles or fuse into advanced Title items.",
 			IsRepeatable: true,
 		},
 		{
-			Name:         "Dragon Scale",
-			Description:  "Hardened scale harvested from ancient drake bosses, ideal for plate & mail armor.",
+			Name:         "Adventure Fragment",
+			Description:  "Precious notes from your expedictions. Used to upgrade Titles or fuse into advanced Title items. Breaks down into 4x Traveler's Note",
 			IsRepeatable: true,
 		},
 		{
-			Name:         "Thunderfury, Blessed Blade of the Windseeker",
-			Description:  "Legendary sword imbued with tempest lightning power.",
+			Name:         "Adventure Journal",
+			Description:  "A compilation of insights from countless journeys. Used to upgrade Titles or fuse into advanced Title items. Breaks down into 4x Adventure Fragment.",
 			IsRepeatable: true,
 		},
 		{
-			Name:         "Sulfuras, Hand of Ragnaros",
-			Description:  "Mighty elemental hammer forged in molten magma core.",
+			Name:         "Pioneer Certificate",
+			Description:  "Pioneer Certificate",
 			IsRepeatable: true,
 		},
 		{
-			Name:         "Ashkandi, Greatsword of the Red Dragonflight",
-			Description:  "Massive greatsword adorned with dragon head pommel.",
+			Name:         "Adv. Gem Choice Box",
+			Description:  "Adv. Gem Box",
 			IsRepeatable: true,
 		},
 		{
-			Name:         "Drake Fang Talisman",
-			Description:  "Ancient talisman granting immense physical combat prowess.",
-			IsRepeatable: true,
-		},
-		{
-			Name:         "Netherwind Crown",
-			Description:  "Arcane tiara pulsating with ethereal nether energy.",
-			IsRepeatable: true,
-		},
-		{
-			Name:         "Staff of Domination",
-			Description:  "High sorcerer staff amplifying elemental spell power.",
-			IsRepeatable: true,
-		},
-		{
-			Name:         "Judgement Breastplate",
-			Description:  "Holy paladin armor radiating divine aura.",
-			IsRepeatable: true,
-		},
-		{
-			Name:         "Band of Accuria",
-			Description:  "Precision ring enhancing hit accuracy and critical striking.",
+			Name:         "Super Gem Choice Box",
+			Description:  "Super Gem Box",
 			IsRepeatable: true,
 		},
 	}
