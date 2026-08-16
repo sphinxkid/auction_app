@@ -192,6 +192,21 @@ func TestAPI_Step3EndpointsWorkflow(t *testing.T) {
 	if resolveBRes.AuctionStatus != models.AuctionStatusResolved {
 		t.Errorf("Expected Parent Auction status RESOLVED after resolving item B, got %s", resolveBRes.AuctionStatus)
 	}
+
+	// 10. Test GET /api/v1/history/ranks/items/:id
+	res, err = http.Get(ts.URL + "/api/v1/history/ranks/items/" + strconvFormat(items[0].ID))
+	if err != nil {
+		t.Fatalf("GET rank history failed: %v", err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK, got %d", res.StatusCode)
+	}
+	var rankHistory []handlers.ItemRankHistoryView
+	_ = json.NewDecoder(res.Body).Decode(&rankHistory)
+	res.Body.Close()
+	if len(rankHistory) == 0 {
+		t.Errorf("Expected recorded rank history snapshots, got 0")
+	}
 }
 
 func strconvFormat(n uint) string {

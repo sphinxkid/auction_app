@@ -31,15 +31,16 @@ func NewAllocationService(db *gorm.DB) *AllocationService {
 
 // ItemResolutionResult holds details about an auction item resolution execution.
 type ItemResolutionResult struct {
-	AuctionID             uint                       `json:"auction_id"`
-	AuctionItemID         uint                       `json:"auction_item_id"`
-	ItemID                uint                       `json:"item_id"`
-	AllocatedQuantity     int                        `json:"allocated_quantity"`
-	AuctionItemStatus     string                     `json:"auction_item_status"`
-	AuctionStatus         string                     `json:"auction_status"`
-	IsAuctionFullyResolved bool                      `json:"is_auction_fully_resolved"`
-	Allocations           []models.AllocationHistory `json:"allocations"`
-	UpdatedRankings       []models.ItemQueueRanking  `json:"updated_rankings"`
+	AuctionID              uint                       `json:"auction_id"`
+	AuctionItemID          uint                       `json:"auction_item_id"`
+	ItemID                 uint                       `json:"item_id"`
+	AllocatedQuantity      int                        `json:"allocated_quantity"`
+	AuctionItemStatus      string                     `json:"auction_item_status"`
+	AuctionStatus          string                     `json:"auction_status"`
+	IsAuctionFullyResolved bool                       `json:"is_auction_fully_resolved"`
+	Allocations            []models.AllocationHistory `json:"allocations"`
+	UpdatedRankings        []models.ItemQueueRanking  `json:"updated_rankings"`
+	RankSnapshots          []models.ItemRankHistory   `json:"rank_snapshots"`
 }
 
 // ResolveAuctionItem resolves a single auction item within an auction and checks parent auction completion status.
@@ -174,7 +175,7 @@ func (s *AllocationService) ResolveAuctionItem(auctionItemID uint) (*ItemResolut
 
 		now := time.Now().UTC()
 
-		var allocations []models.AllocationHistory
+		allocations := []models.AllocationHistory{}
 		for _, winnerID := range winners {
 			alloc := models.AllocationHistory{
 				AuctionID:         auctionID,
@@ -270,7 +271,7 @@ func (s *AllocationService) ResolveAuctionItem(auctionItemID uint) (*ItemResolut
 		fullReRankedList := append([]*models.ItemQueueRanking{}, waitingList...)
 		fullReRankedList = append(fullReRankedList, winnerList...)
 
-		var updatedRankings []models.ItemQueueRanking
+		updatedRankings := []models.ItemQueueRanking{}
 		for idx, ranking := range fullReRankedList {
 			ranking.Rank = idx + 1
 			ranking.UpdatedAt = now
@@ -279,6 +280,24 @@ func (s *AllocationService) ResolveAuctionItem(auctionItemID uint) (*ItemResolut
 				return fmt.Errorf("failed to save queue ranking for member %d: %w", ranking.MemberID, err)
 			}
 			updatedRankings = append(updatedRankings, *ranking)
+		}
+
+		// 6b. Record ItemRankHistory snapshots for each member in the queue for this item
+		rankSnapshots := []models.ItemRankHistory{}
+		for _, ranking := range fullReRankedList {
+			snapshot := models.ItemRankHistory{
+				AuctionID:     auctionID,
+				AuctionItemID: auctionItemID,
+				ItemID:        itemID,
+				MemberID:      ranking.MemberID,
+				Rank:          ranking.Rank,
+				Status:        ranking.Status,
+				RecordedAt:    now,
+			}
+			if err := tx.Create(&snapshot).Error; err != nil {
+				return fmt.Errorf("failed to save rank history snapshot for member %d: %w", ranking.MemberID, err)
+			}
+			rankSnapshots = append(rankSnapshots, snapshot)
 		}
 
 		// 7. Update AuctionItem status to RESOLVED
@@ -311,15 +330,16 @@ func (s *AllocationService) ResolveAuctionItem(auctionItemID uint) (*ItemResolut
 		}
 
 		result = ItemResolutionResult{
-			AuctionID:             auctionID,
-			AuctionItemID:         auctionItemID,
-			ItemID:                itemID,
-			AllocatedQuantity:     len(winners),
-			AuctionItemStatus:     models.AuctionItemStatusResolved,
-			AuctionStatus:         auctionStatus,
+			AuctionID:              auctionID,
+			AuctionItemID:          auctionItemID,
+			ItemID:                 itemID,
+			AllocatedQuantity:      len(winners),
+			AuctionItemStatus:      models.AuctionItemStatusResolved,
+			AuctionStatus:          auctionStatus,
 			IsAuctionFullyResolved: isFullyResolved,
-			Allocations:           allocations,
-			UpdatedRankings:       updatedRankings,
+			Allocations:            allocations,
+			UpdatedRankings:        updatedRankings,
+			RankSnapshots:          rankSnapshots,
 		}
 
 		return nil

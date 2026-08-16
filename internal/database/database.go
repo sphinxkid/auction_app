@@ -56,6 +56,7 @@ func InitDB(cfg *config.Config) (*gorm.DB, error) {
 		&models.IntentToBuy{},
 		&models.ItemQueueRanking{},
 		&models.AllocationHistory{},
+		&models.ItemRankHistory{},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to run auto migrations: %w", err)

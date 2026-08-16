@@ -96,3 +96,18 @@ type AllocationHistory struct {
 	Item              *Item        `gorm:"foreignKey:ItemID;constraint:OnDelete:CASCADE" json:"item,omitempty"`
 	Member            *GuildMember `gorm:"foreignKey:MemberID;constraint:OnDelete:CASCADE" json:"member,omitempty"`
 }
+
+// ItemRankHistory records historical queue rank placement per item, per auction, per member.
+type ItemRankHistory struct {
+	ID            uint         `gorm:"primaryKey;autoIncrement" json:"id"`
+	AuctionID     uint         `gorm:"not null;index" json:"auction_id"`
+	AuctionItemID uint         `gorm:"not null;index" json:"auction_item_id"`
+	ItemID        uint         `gorm:"not null;index" json:"item_id"`
+	MemberID      uint         `gorm:"not null;index" json:"member_id"`
+	Rank          int          `gorm:"not null;index" json:"rank"`
+	Status        string       `gorm:"type:varchar(20);not null" json:"status"`
+	RecordedAt    time.Time    `gorm:"autoCreateTime;index" json:"recorded_at"`
+	Auction       *Auction     `gorm:"foreignKey:AuctionID;constraint:OnDelete:CASCADE" json:"auction,omitempty"`
+	Item          *Item        `gorm:"foreignKey:ItemID;constraint:OnDelete:CASCADE" json:"item,omitempty"`
+	Member        *GuildMember `gorm:"foreignKey:MemberID;constraint:OnDelete:CASCADE" json:"member,omitempty"`
+}

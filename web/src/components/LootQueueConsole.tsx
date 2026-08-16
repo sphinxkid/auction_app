@@ -102,6 +102,21 @@ interface ItemResolutionResult {
   updated_rankings: QueueRanking[];
 }
 
+interface ItemRankHistoryItem {
+  id: number;
+  auction_id: number;
+  auction_title: string;
+  auction_item_id: number;
+  item_id: number;
+  item_name: string;
+  member_id: number;
+  member_name: string;
+  discord_id: string;
+  rank: number;
+  status: string;
+  recorded_at: string;
+}
+
 type TabType = 'create' | 'intent' | 'resolution' | 'queue';
 
 interface DraftAuctionItem {
@@ -135,6 +150,8 @@ export const LootQueueConsole: React.FC = () => {
   const [selectedQueueItemId, setSelectedQueueItemId] = useState<number>(1);
   const [queueRankings, setQueueRankings] = useState<QueueRanking[]>([]);
   const [historyItems, setHistoryItems] = useState<AllocationHistoryItem[]>([]);
+  const [rankHistoryItems, setRankHistoryItems] = useState<ItemRankHistoryItem[]>([]);
+  const [rankHistoryFilterMemberId, setRankHistoryFilterMemberId] = useState<number | 'ALL'>('ALL');
 
   // Resolution & Rank Shift tracking state
   const [lastResolutionResult, setLastResolutionResult] = useState<ItemResolutionResult | null>(null);
@@ -199,15 +216,17 @@ export const LootQueueConsole: React.FC = () => {
   const fetchQueueAndHistory = async (itemId: number) => {
     if (!itemId) return;
     try {
-      const [queueRes, historyRes] = await Promise.all([
+      const [queueRes, historyRes, rankHistoryRes] = await Promise.all([
         fetch(`/api/v1/items/${itemId}/rankings`),
         fetch(`/api/v1/history/items/${itemId}`),
+        fetch(`/api/v1/history/ranks/items/${itemId}`),
       ]);
       if (queueRes.ok) {
         const rankingsData: QueueRanking[] = await queueRes.json();
         setQueueRankings(rankingsData);
       }
       if (historyRes.ok) setHistoryItems(await historyRes.json());
+      if (rankHistoryRes.ok) setRankHistoryItems(await rankHistoryRes.json());
     } catch (err) {
       console.error('Failed to fetch queue or history:', err);
     }
@@ -408,7 +427,7 @@ export const LootQueueConsole: React.FC = () => {
       setLastResolutionResult(result);
 
       // Extract winner names for notification message
-      const winnerNames = result.allocations
+      const winnerNames = (result.allocations || [])
         .map((a) => {
           const m = members.find((mem) => mem.id === a.member_id);
           return m ? m.name : `Member #${a.member_id}`;
@@ -1192,8 +1211,8 @@ export const LootQueueConsole: React.FC = () => {
                                 Queue Rank Movement After Resolution:
                               </span>
                               <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-                                {lastResolutionResult.updated_rankings.map((r) => {
-                                  const isWinner = lastResolutionResult.allocations.some(a => a.member_id === r.member_id);
+                                {(lastResolutionResult.updated_rankings || []).map((r) => {
+                                  const isWinner = (lastResolutionResult.allocations || []).some(a => a.member_id === r.member_id);
                                   return (
                                     <div
                                       key={r.id}
@@ -1412,6 +1431,91 @@ export const LootQueueConsole: React.FC = () => {
                   </tbody>
                 </table>
               </div>
+            </div>
+          </div>
+
+          {/* Member Rank History Across Auctions Section */}
+          <div className="space-y-3 pt-6 border-t border-slate-800">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                <Layers className="w-4 h-4 text-purple-400" />
+                Member Rank History Across Auctions
+              </h3>
+
+              {/* Member Filter Dropdown */}
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-slate-400">Filter Member:</span>
+                <select
+                  value={rankHistoryFilterMemberId}
+                  onChange={(e) =>
+                    setRankHistoryFilterMemberId(
+                      e.target.value === 'ALL' ? 'ALL' : Number(e.target.value)
+                    )
+                  }
+                  className="bg-slate-900 border border-slate-700 text-slate-200 rounded px-2.5 py-1 text-xs focus:outline-none focus:border-purple-500"
+                >
+                  <option value="ALL">All Guild Members</option>
+                  {members.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="bg-slate-900/60 rounded-xl border border-slate-800 overflow-hidden">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-900 border-b border-slate-800 text-slate-400 font-semibold uppercase tracking-wider">
+                    <th className="py-3 px-4">Raid Auction</th>
+                    <th className="py-3 px-4">Guild Member</th>
+                    <th className="py-3 px-4">Historical Rank</th>
+                    <th className="py-3 px-4">Queue Status</th>
+                    <th className="py-3 px-4">Recorded Date/Time</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                  {rankHistoryItems.length > 0 ? (
+                    rankHistoryItems
+                      .filter((rh) =>
+                        rankHistoryFilterMemberId === 'ALL'
+                          ? true
+                          : rh.member_id === rankHistoryFilterMemberId
+                      )
+                      .map((rh) => (
+                        <tr key={rh.id} className="hover:bg-slate-800/40 transition-colors">
+                          <td className="py-3 px-4 text-slate-200 font-semibold">{rh.auction_title}</td>
+                          <td className="py-3 px-4">
+                            <span className="font-semibold text-slate-100 block">{rh.member_name}</span>
+                            <span className="text-[10px] text-slate-500 font-mono">{rh.discord_id}</span>
+                          </td>
+                          <td className="py-3 px-4 font-extrabold text-amber-400">#{rh.rank}</td>
+                          <td className="py-3 px-4">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                rh.status === 'WAITING'
+                                  ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                                  : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                              }`}
+                            >
+                              {rh.status}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-slate-400 font-mono text-[11px]">
+                            {new Date(rh.recorded_at).toLocaleString()}
+                          </td>
+                        </tr>
+                      ))
+                  ) : (
+                    <tr>
+                      <td colSpan={5} className="py-6 text-center text-slate-500">
+                        No historical rank snapshots recorded for this item yet. Rank snapshots are saved automatically when item auctions resolve.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         </section>

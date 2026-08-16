@@ -162,3 +162,65 @@ func GetMemberHistoryHandler(db *gorm.DB) http.HandlerFunc {
 		_ = json.NewEncoder(w).Encode(mapAllocationHistoryViews(histories))
 	}
 }
+
+// ItemRankHistoryView Response DTO
+type ItemRankHistoryView struct {
+	ID            uint      `json:"id"`
+	AuctionID     uint      `json:"auction_id"`
+	AuctionTitle  string    `json:"auction_title"`
+	AuctionItemID uint      `json:"auction_item_id"`
+	ItemID        uint      `json:"item_id"`
+	ItemName      string    `json:"item_name"`
+	MemberID      uint      `json:"member_id"`
+	MemberName    string    `json:"member_name"`
+	DiscordID     string    `json:"discord_id"`
+	Rank          int       `json:"rank"`
+	Status        string    `json:"status"`
+	RecordedAt    time.Time `json:"recorded_at"`
+}
+
+// GetItemRankHistoryHandler handles GET /api/v1/history/ranks/items/{id}
+func GetItemRankHistoryHandler(db *gorm.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		itemIDStr := chi.URLParam(r, "id")
+		itemID, err := strconv.ParseUint(itemIDStr, 10, 32)
+		if err != nil {
+			http.Error(w, `{"error":"invalid item id"}`, http.StatusBadRequest)
+			return
+		}
+
+		var records []models.ItemRankHistory
+		err = db.Preload("Auction").Preload("Item").Preload("Member").
+			Where("item_id = ?", itemID).
+			Order("recorded_at DESC, rank ASC").
+			Find(&records).Error
+
+		if err != nil {
+			http.Error(w, `{"error":"failed to fetch item rank history"}`, http.StatusInternalServerError)
+			return
+		}
+
+		views := make([]ItemRankHistoryView, len(records))
+		for i, r := range records {
+			views[i] = ItemRankHistoryView{
+				ID:            r.ID,
+				AuctionID:     r.AuctionID,
+				AuctionTitle:  r.Auction.Title,
+				AuctionItemID: r.AuctionItemID,
+				ItemID:        r.ItemID,
+				ItemName:      r.Item.Name,
+				MemberID:      r.MemberID,
+				MemberName:    r.Member.Name,
+				DiscordID:     r.Member.DiscordID,
+				Rank:          r.Rank,
+				Status:        r.Status,
+				RecordedAt:    r.RecordedAt,
+			}
+		}
+
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(views)
+	}
+}

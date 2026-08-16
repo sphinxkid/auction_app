@@ -65,10 +65,11 @@ func NewServer(cfg *config.Config, db *gorm.DB) *Server {
 		// Queue & Ranking Views
 		r.Get("/items/{id}/rankings", handlers.GetItemQueueRankingsHandler(db))
 
-		// Allocation History Views
+		// Allocation & Rank History Views
 		r.Get("/history/auctions/{id}", handlers.GetAuctionHistoryHandler(db))
 		r.Get("/history/items/{id}", handlers.GetItemHistoryHandler(db))
 		r.Get("/history/members/{id}", handlers.GetMemberHistoryHandler(db))
+		r.Get("/history/ranks/items/{id}", handlers.GetItemRankHistoryHandler(db))
 	})
 
 	// Serve Static Single-Page React App (if web/dist exists)
