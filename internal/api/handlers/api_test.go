@@ -105,8 +105,8 @@ func TestAPI_Step3EndpointsWorkflow(t *testing.T) {
 	var items []models.Item
 	_ = json.NewDecoder(res.Body).Decode(&items)
 	res.Body.Close()
-	if len(items) != 10 {
-		t.Errorf("Expected 10 seeded items, got %d", len(items))
+	if len(items) != 6 {
+		t.Errorf("Expected 6 seeded items, got %d", len(items))
 	}
 
 	// 2b. Test POST /api/v1/items (Create new raid item)

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Users,
   UserPlus,
@@ -10,12 +10,17 @@ import {
   Sparkles,
   Edit3,
   X,
-  CheckCircle2
+  CheckCircle2,
+  Trophy,
+  Package,
+  History,
+  Calendar
 } from 'lucide-react';
 import {
   Member,
   GuildClass,
   MemberSubView,
+  AllocationHistoryItem,
   COLOR_PRESETS
 } from '../types';
 
@@ -43,6 +48,10 @@ export const GuildRosterConsole: React.FC<GuildRosterConsoleProps> = ({
   const [memberSubView, setMemberSubView] = useState<MemberSubView>('roster');
   const [rosterSearchQuery, setRosterSearchQuery] = useState('');
 
+  // Items Won History State per Member
+  const [memberHistories, setMemberHistories] = useState<{ [memberId: number]: AllocationHistoryItem[] }>({});
+  const [viewingHistoryMember, setViewingHistoryMember] = useState<Member | null>(null);
+
   // New Member Form State
   const [newMemberName, setNewMemberName] = useState('');
   const [newMemberDiscord, setNewMemberDiscord] = useState('');
@@ -64,6 +73,34 @@ export const GuildRosterConsole: React.FC<GuildRosterConsoleProps> = ({
   const [editingClass, setEditingClass] = useState<GuildClass | null>(null);
   const [editClassName, setEditClassName] = useState('');
   const [editClassColor, setEditClassColor] = useState('#A855F7');
+
+  // Fetch items won history for all members
+  const fetchAllMembersHistory = async () => {
+    if (!members || members.length === 0) return;
+    try {
+      const historyPromises = members.map(async (m) => {
+        const res = await fetch(`/api/v1/history/members/${m.id}`);
+        if (res.ok) {
+          const records: AllocationHistoryItem[] = await res.json();
+          return { memberId: m.id, records };
+        }
+        return { memberId: m.id, records: [] };
+      });
+
+      const results = await Promise.all(historyPromises);
+      const historyMap: { [memberId: number]: AllocationHistoryItem[] } = {};
+      results.forEach((r) => {
+        historyMap[r.memberId] = r.records;
+      });
+      setMemberHistories(historyMap);
+    } catch (err) {
+      console.error('Failed to fetch members allocation history:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchAllMembersHistory();
+  }, [members]);
 
   const filteredRosterMembers = members.filter(
     (m) =>
@@ -296,40 +333,94 @@ export const GuildRosterConsole: React.FC<GuildRosterConsoleProps> = ({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredRosterMembers.map((m) => (
-              <div
-                key={m.id}
-                className="p-4 bg-slate-950/80 rounded-xl border border-slate-800/80 space-y-3 flex flex-col justify-between"
-              >
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    {renderMemberBadge(m.name, m.class)}
-                    <span className="text-xs text-slate-400 font-mono">#{m.id}</span>
+            {filteredRosterMembers.map((m) => {
+              const wonRecords = memberHistories[m.id] || [];
+              const totalQuantityWon = wonRecords.reduce((sum, r) => sum + r.allocated_quantity, 0);
+
+              return (
+                <div
+                  key={m.id}
+                  className="p-4 bg-slate-950/80 rounded-xl border border-slate-800/80 space-y-3 flex flex-col justify-between"
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      {renderMemberBadge(m.name, m.class)}
+                      <span className="text-xs text-slate-400 font-mono">#{m.id}</span>
+                    </div>
+
+                    <p className="text-xs text-slate-400 font-mono flex items-center gap-1.5">
+                      <span className="text-slate-500">Discord:</span> {m.discord_id}
+                    </p>
+
+                    {m.gvg_build && (
+                      <div className="p-2 bg-slate-900/60 rounded-lg border border-slate-800 text-[11px] text-purple-300">
+                        <strong className="text-slate-400 block text-[10px] uppercase">GvG Build:</strong>
+                        {m.gvg_build}
+                      </div>
+                    )}
+
+                    {/* ITEMS WON HISTORY SUMMARY ON MEMBER CARD */}
+                    <div className="p-3 bg-slate-900/90 rounded-xl border border-amber-500/20 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-extrabold text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
+                          <Trophy className="w-3.5 h-3.5 text-amber-400" />
+                          Items Won ({wonRecords.length})
+                        </span>
+                        <span className="text-[10px] font-black text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                          Total Qty: {totalQuantityWon}
+                        </span>
+                      </div>
+
+                      {wonRecords.length > 0 ? (
+                        <div className="space-y-1.5 max-h-28 overflow-y-auto pr-1">
+                          {wonRecords.slice(0, 3).map((rec) => (
+                            <div
+                              key={rec.id}
+                              className="p-1.5 bg-slate-950 rounded-lg border border-slate-800/80 flex items-center justify-between text-[11px]"
+                            >
+                              <span className="font-bold text-slate-200 truncate max-w-[130px]" title={rec.item_name}>
+                                {rec.item_name}
+                              </span>
+                              <span className="font-mono text-amber-300 text-[10px]">
+                                x{rec.allocated_quantity}
+                              </span>
+                            </div>
+                          ))}
+                          {wonRecords.length > 3 && (
+                            <button
+                              onClick={() => setViewingHistoryMember(m)}
+                              className="w-full text-center text-[10px] font-bold text-purple-400 hover:text-purple-300 pt-0.5"
+                            >
+                              + {wonRecords.length - 3} more item(s)...
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-slate-500 italic">No loot items won yet.</p>
+                      )}
+                    </div>
                   </div>
 
-                  <p className="text-xs text-slate-400 font-mono flex items-center gap-1.5">
-                    <span className="text-slate-500">Discord:</span> {m.discord_id}
-                  </p>
+                  <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between gap-2">
+                    <button
+                      onClick={() => setViewingHistoryMember(m)}
+                      className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm"
+                    >
+                      <Trophy className="w-3.5 h-3.5 text-amber-400" />
+                      View Won Items ({wonRecords.length})
+                    </button>
 
-                  {m.gvg_build && (
-                    <div className="p-2 bg-slate-900/60 rounded-lg border border-slate-800 text-[11px] text-purple-300">
-                      <strong className="text-slate-400 block text-[10px] uppercase">GvG Build:</strong>
-                      {m.gvg_build}
-                    </div>
-                  )}
+                    <button
+                      onClick={() => openEditMemberModal(m)}
+                      className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-purple-300 border border-purple-500/30 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm"
+                    >
+                      <Edit3 className="w-3.5 h-3.5 text-purple-400" />
+                      Edit Member
+                    </button>
+                  </div>
                 </div>
-
-                <div className="pt-2 border-t border-slate-800/80 flex items-center justify-end">
-                  <button
-                    onClick={() => openEditMemberModal(m)}
-                    className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-purple-300 border border-purple-500/30 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm"
-                  >
-                    <Edit3 className="w-3.5 h-3.5 text-purple-400" />
-                    Edit Member
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -536,6 +627,87 @@ export const GuildRosterConsole: React.FC<GuildRosterConsoleProps> = ({
                   </div>
                 );
               })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ITEMS WON HISTORY MODAL PER MEMBER */}
+      {viewingHistoryMember && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-amber-500/40 rounded-2xl p-6 max-w-2xl w-full space-y-5 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <Trophy className="w-5 h-5 text-amber-400" />
+                <h3 className="text-lg font-black text-slate-100">
+                  Loot Won History for {viewingHistoryMember.name}
+                </h3>
+              </div>
+              <button
+                onClick={() => setViewingHistoryMember(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-3 bg-slate-950 rounded-xl border border-slate-800">
+                <div className="flex items-center gap-2">
+                  {renderMemberBadge(viewingHistoryMember.name, viewingHistoryMember.class)}
+                  <span className="text-xs text-slate-400 font-mono">({viewingHistoryMember.discord_id})</span>
+                </div>
+                <span className="text-xs font-black text-amber-300 bg-amber-500/20 px-3 py-1 rounded-full border border-amber-500/40">
+                  Total Items Won: {(memberHistories[viewingHistoryMember.id] || []).length}
+                </span>
+              </div>
+
+              {(memberHistories[viewingHistoryMember.id] || []).length > 0 ? (
+                <div className="bg-slate-950 rounded-xl border border-slate-800 overflow-hidden max-h-80 overflow-y-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-900 border-b border-slate-800 text-slate-400 font-semibold uppercase">
+                        <th className="py-3 px-4">Item Name</th>
+                        <th className="py-3 px-4 text-center">Allocated Qty</th>
+                        <th className="py-3 px-4">Raid Auction</th>
+                        <th className="py-3 px-4 text-right">Date Won</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 text-slate-200">
+                      {(memberHistories[viewingHistoryMember.id] || []).map((rec) => (
+                        <tr key={rec.id} className="hover:bg-slate-900/40">
+                          <td className="py-3 px-4 font-bold text-amber-300 flex items-center gap-2">
+                            <Package className="w-4 h-4 text-amber-400 shrink-0" />
+                            {rec.item_name}
+                          </td>
+                          <td className="py-3 px-4 text-center font-black text-purple-300">
+                            x{rec.allocated_quantity}
+                          </td>
+                          <td className="py-3 px-4 text-slate-300 font-medium">
+                            {rec.auction_title}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono text-slate-400 text-[11px]">
+                            {new Date(rec.allocated_at).toLocaleDateString()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500 italic p-8 text-center border border-dashed border-slate-800 rounded-xl">
+                  This guild member has not won any loot items yet.
+                </p>
+              )}
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={() => setViewingHistoryMember(null)}
+                className="px-5 py-2 bg-slate-950 text-slate-300 hover:text-white rounded-xl text-xs font-bold border border-slate-800"
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>
