@@ -8,7 +8,7 @@ import (
 	"guild-loot-system/internal/models"
 )
 
-// SeedDatabase seeds 5 guild members and 3 repeatable raid items idempotently.
+// SeedDatabase seeds 6 guild members and 2 repeatable raid items idempotently.
 func SeedDatabase(db *gorm.DB) error {
 	log.Println("Checking database seed status...")
 
@@ -20,11 +20,12 @@ func SeedDatabase(db *gorm.DB) error {
 
 	if memberCount == 0 {
 		members := []models.GuildMember{
-			{Name: "Aegis Shieldwall", DiscordID: "aegis#0001"},
-			{Name: "Nyx Shadowstep", DiscordID: "nyx#0002"},
-			{Name: "Ignis Spellweaver", DiscordID: "ignis#0003"},
-			{Name: "Valaria Lightbringer", DiscordID: "valaria#0004"},
-			{Name: "Thoradin Ironfist", DiscordID: "thoradin#0005"},
+			{Name: "Aeloria", DiscordID: "aeloria#0001"},
+			{Name: "Vorn", DiscordID: "vorn#0002"},
+			{Name: "Kaelen", DiscordID: "kaelen#0003"},
+			{Name: "Sylas", DiscordID: "sylas#0004"},
+			{Name: "Morrigan", DiscordID: "morrigan#0005"},
+			{Name: "Thalor", DiscordID: "thalor#0006"},
 		}
 
 		if err := db.Create(&members).Error; err != nil {
@@ -44,18 +45,13 @@ func SeedDatabase(db *gorm.DB) error {
 	if itemCount == 0 {
 		items := []models.Item{
 			{
-				Name:         "Warcrown of the Fallen King",
-				Description:  "Legendary plate helm forged in dragonflame with high strength and critical strike.",
+				Name:         "Primordial Essence",
+				Description:  "Concentrated elemental reagent used for crafting legendary raid gear.",
 				IsRepeatable: true,
 			},
 			{
-				Name:         "Tome of Arcane Secrets",
-				Description:  "Ancient grimoire infusing spellcasters with immense intellect and spell power.",
-				IsRepeatable: true,
-			},
-			{
-				Name:         "Shadowblade Dagger",
-				Description:  "Agile swiftblade inflicting deadly venom and armor penetration.",
+				Name:         "Dragon Scale",
+				Description:  "Hardened scale harvested from ancient drake bosses, ideal for plate & mail armor.",
 				IsRepeatable: true,
 			},
 		}

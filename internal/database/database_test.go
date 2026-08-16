@@ -38,15 +38,15 @@ func TestInitDBAndSeeder(t *testing.T) {
 	if err := db.Model(&models.GuildMember{}).Count(&memberCount).Error; err != nil {
 		t.Fatalf("Failed to count members: %v", err)
 	}
-	if memberCount != 5 {
-		t.Errorf("Expected 5 seeded members, got %d", memberCount)
+	if memberCount != 6 {
+		t.Errorf("Expected 6 seeded members, got %d", memberCount)
 	}
 
 	var itemCount int64
 	if err := db.Model(&models.Item{}).Count(&itemCount).Error; err != nil {
 		t.Fatalf("Failed to count items: %v", err)
 	}
-	if itemCount != 3 {
-		t.Errorf("Expected 3 seeded items, got %d", itemCount)
+	if itemCount != 2 {
+		t.Errorf("Expected 2 seeded items, got %d", itemCount)
 	}
 }

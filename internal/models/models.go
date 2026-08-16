@@ -11,6 +11,12 @@ const (
 	AuctionStatusResolved = "RESOLVED"
 )
 
+// AuctionItemStatus constants
+const (
+	AuctionItemStatusPending  = "PENDING"
+	AuctionItemStatusResolved = "RESOLVED"
+)
+
 // QueueMemberStatus constants
 const (
 	QueueStatusWaiting    = "WAITING"
@@ -33,48 +39,60 @@ type Item struct {
 	IsRepeatable bool   `gorm:"default:false;not null" json:"is_repeatable"`
 }
 
-// Auction represents a specific loot auction instance.
+// Auction represents a overall raid loot auction instance.
 type Auction struct {
-	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	Title       string    `gorm:"type:varchar(200);not null" json:"title"`
-	Status      string    `gorm:"type:varchar(20);default:'DRAFT';not null;index" json:"status"` // DRAFT, ACTIVE, RESOLVED
-	AuctionDate time.Time `gorm:"not null;index" json:"auction_date"`
+	ID           uint          `gorm:"primaryKey;autoIncrement" json:"id"`
+	Title        string        `gorm:"type:varchar(200);not null" json:"title"`
+	Status       string        `gorm:"type:varchar(20);default:'ACTIVE';not null;index" json:"status"` // DRAFT, ACTIVE, RESOLVED
+	AuctionDate  time.Time     `gorm:"not null;index" json:"auction_date"`
+	AuctionItems []AuctionItem `gorm:"foreignKey:AuctionID;constraint:OnDelete:CASCADE" json:"auction_items,omitempty"`
 }
 
-// IntentToBuy records a guild member's intention to bid/buy an item in an auction.
+// AuctionItem represents a specific item up for bid within a parent auction with a specific quantity.
+type AuctionItem struct {
+	ID         uint          `gorm:"primaryKey;autoIncrement" json:"id"`
+	AuctionID  uint          `gorm:"not null;index" json:"auction_id"`
+	ItemID     uint          `gorm:"not null;index" json:"item_id"`
+	Quantity   int           `gorm:"not null;default:1" json:"quantity"`
+	Status     string        `gorm:"type:varchar(20);default:'PENDING';not null;index" json:"status"` // PENDING, RESOLVED
+	ResolvedAt *time.Time    `gorm:"index" json:"resolved_at,omitempty"`
+	Auction    *Auction      `gorm:"foreignKey:AuctionID;constraint:OnDelete:CASCADE" json:"auction,omitempty"`
+	Item       *Item         `gorm:"foreignKey:ItemID;constraint:OnDelete:CASCADE" json:"item,omitempty"`
+	Intents    []IntentToBuy `gorm:"foreignKey:AuctionItemID;constraint:OnDelete:CASCADE" json:"intents,omitempty"`
+}
+
+// IntentToBuy records a guild member's intention to bid/buy a specific AuctionItem.
 type IntentToBuy struct {
-	ID          uint        `gorm:"primaryKey;autoIncrement" json:"id"`
-	AuctionID   uint        `gorm:"not null;index" json:"auction_id"`
-	ItemID      uint        `gorm:"not null;index" json:"item_id"`
-	MemberID    uint        `gorm:"not null;index" json:"member_id"`
-	SubmittedAt time.Time   `gorm:"autoCreateTime;index" json:"submitted_at"`
-	Auction     Auction     `gorm:"foreignKey:AuctionID;constraint:OnDelete:CASCADE" json:"auction,omitempty"`
-	Item        Item        `gorm:"foreignKey:ItemID;constraint:OnDelete:CASCADE" json:"item,omitempty"`
-	Member      GuildMember `gorm:"foreignKey:MemberID;constraint:OnDelete:CASCADE" json:"member,omitempty"`
+	ID            uint         `gorm:"primaryKey;autoIncrement" json:"id"`
+	AuctionItemID uint         `gorm:"not null;index:idx_auction_item_member,unique" json:"auction_item_id"`
+	MemberID      uint         `gorm:"not null;index:idx_auction_item_member,unique" json:"member_id"`
+	SubmittedAt   time.Time    `gorm:"autoCreateTime;index" json:"submitted_at"`
+	AuctionItem   *AuctionItem `gorm:"foreignKey:AuctionItemID;constraint:OnDelete:CASCADE" json:"auction_item,omitempty"`
+	Member        *GuildMember `gorm:"foreignKey:MemberID;constraint:OnDelete:CASCADE" json:"member,omitempty"`
 }
 
 // ItemQueueRanking tracks the sequential queue position and past win history for a specific item.
 type ItemQueueRanking struct {
-	ID        uint        `gorm:"primaryKey;autoIncrement" json:"id"`
-	ItemID    uint        `gorm:"not null;index:idx_item_member,unique" json:"item_id"`
-	MemberID  uint        `gorm:"not null;index:idx_item_member,unique" json:"member_id"`
-	Rank      int         `gorm:"not null;index" json:"rank"` // Sequential explicit integer rank (1..M)
-	Status    string      `gorm:"type:varchar(20);default:'WAITING';not null;index" json:"status"` // WAITING, PAST_WINNER
-	LastWonAt *time.Time  `gorm:"index" json:"last_won_at,omitempty"`
-	UpdatedAt time.Time   `gorm:"autoUpdateTime" json:"updated_at"`
-	Item      Item        `gorm:"foreignKey:ItemID;constraint:OnDelete:CASCADE" json:"item,omitempty"`
-	Member    GuildMember `gorm:"foreignKey:MemberID;constraint:OnDelete:CASCADE" json:"member,omitempty"`
+	ID        uint         `gorm:"primaryKey;autoIncrement" json:"id"`
+	ItemID    uint         `gorm:"not null;index:idx_item_member,unique" json:"item_id"`
+	MemberID  uint         `gorm:"not null;index:idx_item_member,unique" json:"member_id"`
+	Rank      int          `gorm:"not null;index" json:"rank"` // Sequential explicit integer rank (1..M)
+	Status    string       `gorm:"type:varchar(20);default:'WAITING';not null;index" json:"status"` // WAITING, PAST_WINNER
+	LastWonAt *time.Time   `gorm:"index" json:"last_won_at,omitempty"`
+	UpdatedAt time.Time    `gorm:"autoUpdateTime" json:"updated_at"`
+	Item      *Item        `gorm:"foreignKey:ItemID;constraint:OnDelete:CASCADE" json:"item,omitempty"`
+	Member    *GuildMember `gorm:"foreignKey:MemberID;constraint:OnDelete:CASCADE" json:"member,omitempty"`
 }
 
-// AllocationHistory records the final item allocation result when an auction resolves.
+// AllocationHistory records the final item allocation result when an auction item resolves.
 type AllocationHistory struct {
-	ID                uint        `gorm:"primaryKey;autoIncrement" json:"id"`
-	AuctionID         uint        `gorm:"not null;index" json:"auction_id"`
-	ItemID            uint        `gorm:"not null;index" json:"item_id"`
-	MemberID          uint        `gorm:"not null;index" json:"member_id"`
-	AllocatedQuantity int         `gorm:"not null;default:1" json:"allocated_quantity"`
-	AllocatedAt       time.Time   `gorm:"autoCreateTime" json:"allocated_at"`
-	Auction           Auction     `gorm:"foreignKey:AuctionID;constraint:OnDelete:CASCADE" json:"auction,omitempty"`
-	Item              Item        `gorm:"foreignKey:ItemID;constraint:OnDelete:CASCADE" json:"item,omitempty"`
-	Member            GuildMember `gorm:"foreignKey:MemberID;constraint:OnDelete:CASCADE" json:"member,omitempty"`
+	ID                uint         `gorm:"primaryKey;autoIncrement" json:"id"`
+	AuctionID         uint         `gorm:"not null;index" json:"auction_id"`
+	ItemID            uint         `gorm:"not null;index" json:"item_id"`
+	MemberID          uint         `gorm:"not null;index" json:"member_id"`
+	AllocatedQuantity int          `gorm:"not null;default:1" json:"allocated_quantity"`
+	AllocatedAt       time.Time    `gorm:"autoCreateTime" json:"allocated_at"`
+	Auction           *Auction     `gorm:"foreignKey:AuctionID;constraint:OnDelete:CASCADE" json:"auction,omitempty"`
+	Item              *Item        `gorm:"foreignKey:ItemID;constraint:OnDelete:CASCADE" json:"item,omitempty"`
+	Member            *GuildMember `gorm:"foreignKey:MemberID;constraint:OnDelete:CASCADE" json:"member,omitempty"`
 }

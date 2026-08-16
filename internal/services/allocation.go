@@ -14,12 +14,12 @@ import (
 )
 
 var (
-	ErrAuctionNotFound = errors.New("auction not found")
-	ErrAuctionResolved = errors.New("auction is already resolved")
-	ErrInvalidQuantity = errors.New("quantity must be greater than 0")
+	ErrAuctionItemNotFound = errors.New("auction item not found")
+	ErrAuctionItemResolved = errors.New("auction item is already resolved")
+	ErrInvalidQuantity     = errors.New("quantity must be greater than 0")
 )
 
-// AllocationService handles auction resolution and queue ranking calculations.
+// AllocationService handles per-item auction resolution and queue ranking calculations.
 type AllocationService struct {
 	db *gorm.DB
 }
@@ -29,52 +29,58 @@ func NewAllocationService(db *gorm.DB) *AllocationService {
 	return &AllocationService{db: db}
 }
 
-// ResolutionResult holds details about an auction resolution execution.
-type ResolutionResult struct {
-	AuctionID         uint                       `json:"auction_id"`
-	ItemID            uint                       `json:"item_id"`
-	AllocatedQuantity int                        `json:"allocated_quantity"`
-	Allocations       []models.AllocationHistory `json:"allocations"`
-	UpdatedRankings   []models.ItemQueueRanking  `json:"updated_rankings"`
+// ItemResolutionResult holds details about an auction item resolution execution.
+type ItemResolutionResult struct {
+	AuctionID             uint                       `json:"auction_id"`
+	AuctionItemID         uint                       `json:"auction_item_id"`
+	ItemID                uint                       `json:"item_id"`
+	AllocatedQuantity     int                        `json:"allocated_quantity"`
+	AuctionItemStatus     string                     `json:"auction_item_status"`
+	AuctionStatus         string                     `json:"auction_status"`
+	IsAuctionFullyResolved bool                      `json:"is_auction_fully_resolved"`
+	Allocations           []models.AllocationHistory `json:"allocations"`
+	UpdatedRankings       []models.ItemQueueRanking  `json:"updated_rankings"`
 }
 
-// ResolveAuction resolves an auction for a specific item with quantity N.
-func (s *AllocationService) ResolveAuction(auctionID uint, itemID uint, quantity int) (*ResolutionResult, error) {
-	if quantity <= 0 {
-		return nil, ErrInvalidQuantity
-	}
-
-	var result ResolutionResult
+// ResolveAuctionItem resolves a single auction item within an auction and checks parent auction completion status.
+func (s *AllocationService) ResolveAuctionItem(auctionItemID uint) (*ItemResolutionResult, error) {
+	var result ItemResolutionResult
 
 	err := s.db.Transaction(func(tx *gorm.DB) error {
-		// 1. Fetch & lock Auction
-		var auction models.Auction
-		if err := tx.First(&auction, auctionID).Error; err != nil {
+		// 1. Fetch & lock AuctionItem
+		var auctionItem models.AuctionItem
+		if err := tx.Preload("Auction").Preload("Item").First(&auctionItem, auctionItemID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrAuctionNotFound
+				return ErrAuctionItemNotFound
 			}
 			return err
 		}
 
-		if auction.Status == models.AuctionStatusResolved {
-			return ErrAuctionResolved
+		if auctionItem.Status == models.AuctionItemStatusResolved {
+			return ErrAuctionItemResolved
 		}
 
-		// 2. Fetch all IntentToBuy records for this auction and item
+		quantity := auctionItem.Quantity
+		if quantity <= 0 {
+			quantity = 1
+		}
+
+		itemID := auctionItem.ItemID
+		auctionID := auctionItem.AuctionID
+
+		// 2. Fetch all IntentToBuy records for this AuctionItem
 		var intents []models.IntentToBuy
-		if err := tx.Where("auction_id = ? AND item_id = ?", auctionID, itemID).Find(&intents).Error; err != nil {
+		if err := tx.Where("auction_item_id = ?", auctionItemID).Find(&intents).Error; err != nil {
 			return fmt.Errorf("failed to fetch intents to buy: %w", err)
 		}
 
 		// Collect member IDs who submitted intent
 		intentMemberIDs := make([]uint, len(intents))
-		intentMemberSet := make(map[uint]bool)
 		for i, intent := range intents {
 			intentMemberIDs[i] = intent.MemberID
-			intentMemberSet[intent.MemberID] = true
 		}
 
-		// 3. Fetch existing ItemQueueRanking records for this item
+		// 3. Fetch existing ItemQueueRanking records for this ItemID
 		var existingRankings []models.ItemQueueRanking
 		if err := tx.Where("item_id = ?", itemID).Find(&existingRankings).Error; err != nil {
 			return fmt.Errorf("failed to fetch item queue rankings: %w", err)
@@ -184,10 +190,8 @@ func (s *AllocationService) ResolveAuction(auctionID uint, itemID uint, quantity
 		}
 
 		// 6. Update & Re-Index Full ItemQueueRanking for ItemID
-		// Ensure every active queue member (existing + new intent submitters) has a record
 		allMembersMap := make(map[uint]*models.ItemQueueRanking)
 		for memberID, ranking := range existingRankingMap {
-			// Clone struct to modify in-memory
 			r := *ranking
 			allMembersMap[memberID] = &r
 		}
@@ -210,7 +214,6 @@ func (s *AllocationService) ResolveAuction(auctionID uint, itemID uint, quantity
 				t := now
 				ranking.LastWonAt = &t
 			} else {
-				// Unallocated new applicants get Status = WAITING
 				if ranking.ID == 0 {
 					ranking.Status = models.QueueStatusWaiting
 				}
@@ -218,12 +221,9 @@ func (s *AllocationService) ResolveAuction(auctionID uint, itemID uint, quantity
 		}
 
 		// Group all records for explicit re-ranking
-		// Group A: WAITING members
-		// Group B: PAST_WINNER members
 		var waitingList []*models.ItemQueueRanking
 		var winnerList []*models.ItemQueueRanking
 
-		// Track new applicants' shuffle order
 		tier2OrderMap := make(map[uint]int)
 		for idx, memberID := range tier2 {
 			tier2OrderMap[memberID] = idx
@@ -237,8 +237,7 @@ func (s *AllocationService) ResolveAuction(auctionID uint, itemID uint, quantity
 			}
 		}
 
-		// Sort WAITING list:
-		// Existing waiters ordered by current Rank ASC; Tier 2 new applicants placed after existing waiters in shuffled order
+		// Sort WAITING list
 		sort.Slice(waitingList, func(i, j int) bool {
 			rI := waitingList[i]
 			rJ := waitingList[j]
@@ -252,12 +251,10 @@ func (s *AllocationService) ResolveAuction(auctionID uint, itemID uint, quantity
 			if isNewI && isNewJ {
 				return tier2OrderMap[rI.MemberID] < tier2OrderMap[rJ.MemberID]
 			}
-			// Existing waiters come before new applicants
 			return !isNewI
 		})
 
-		// Sort PAST_WINNER list:
-		// Ordered by LastWonAt ASC (oldest winner first; newest winner with NOW() at bottom)
+		// Sort PAST_WINNER list
 		sort.Slice(winnerList, func(i, j int) bool {
 			tI := time.Time{}
 			if winnerList[i].LastWonAt != nil {
@@ -270,13 +267,10 @@ func (s *AllocationService) ResolveAuction(auctionID uint, itemID uint, quantity
 			return tI.Before(tJ)
 		})
 
-		// Combine into full re-ranked list: [WAITING list] + [PAST_WINNER list]
 		fullReRankedList := append([]*models.ItemQueueRanking{}, waitingList...)
 		fullReRankedList = append(fullReRankedList, winnerList...)
 
 		var updatedRankings []models.ItemQueueRanking
-
-		// Assign explicit sequential ranks (1..M) and save to DB
 		for idx, ranking := range fullReRankedList {
 			ranking.Rank = idx + 1
 			ranking.UpdatedAt = now
@@ -287,17 +281,45 @@ func (s *AllocationService) ResolveAuction(auctionID uint, itemID uint, quantity
 			updatedRankings = append(updatedRankings, *ranking)
 		}
 
-		// Mark auction as RESOLVED
-		if err := tx.Model(&auction).Update("status", models.AuctionStatusResolved).Error; err != nil {
-			return fmt.Errorf("failed to update auction status: %w", err)
+		// 7. Update AuctionItem status to RESOLVED
+		if err := tx.Model(&auctionItem).Updates(map[string]interface{}{
+			"status":      models.AuctionItemStatusResolved,
+			"resolved_at": now,
+		}).Error; err != nil {
+			return fmt.Errorf("failed to update auction item status: %w", err)
 		}
 
-		result = ResolutionResult{
-			AuctionID:         auctionID,
-			ItemID:            itemID,
-			AllocatedQuantity: len(winners),
-			Allocations:       allocations,
-			UpdatedRankings:   updatedRankings,
+		// 8. Auction State Verification Check: Check if all items in parent auction are RESOLVED
+		var remainingPending int64
+		if err := tx.Model(&models.AuctionItem{}).
+			Where("auction_id = ? AND status != ?", auctionID, models.AuctionItemStatusResolved).
+			Count(&remainingPending).Error; err != nil {
+			return fmt.Errorf("failed to count pending auction items: %w", err)
+		}
+
+		auctionStatus := models.AuctionStatusActive
+		isFullyResolved := false
+
+		if remainingPending == 0 {
+			auctionStatus = models.AuctionStatusResolved
+			isFullyResolved = true
+			if err := tx.Model(&models.Auction{}).
+				Where("id = ?", auctionID).
+				Update("status", models.AuctionStatusResolved).Error; err != nil {
+				return fmt.Errorf("failed to update parent auction status: %w", err)
+			}
+		}
+
+		result = ItemResolutionResult{
+			AuctionID:             auctionID,
+			AuctionItemID:         auctionItemID,
+			ItemID:                itemID,
+			AllocatedQuantity:     len(winners),
+			AuctionItemStatus:     models.AuctionItemStatusResolved,
+			AuctionStatus:         auctionStatus,
+			IsAuctionFullyResolved: isFullyResolved,
+			Allocations:           allocations,
+			UpdatedRankings:       updatedRankings,
 		}
 
 		return nil

@@ -49,10 +49,17 @@ func NewServer(cfg *config.Config, db *gorm.DB) *Server {
 
 	// RESTful API v1 Routes
 	r.Route("/api/v1", func(r chi.Router) {
+		// Domain Queries
+		r.Get("/members", handlers.GetMembersHandler(db))
+		r.Get("/items", handlers.GetItemsHandler(db))
+
 		// Auction Management
 		r.Post("/auctions", handlers.CreateAuctionHandler(db))
-		r.Post("/auctions/{id}/intents", handlers.SubmitIntentHandler(db))
-		r.Post("/auctions/{id}/resolve", handlers.ResolveAuctionHandler(db))
+		r.Get("/auctions/active", handlers.GetActiveAuctionHandler(db))
+
+		// AuctionItem Intents & Resolution
+		r.Post("/auction-items/{id}/intents", handlers.SubmitAuctionItemIntentHandler(db))
+		r.Post("/auction-items/{id}/resolve", handlers.ResolveAuctionItemHandler(db))
 
 		// Queue & Ranking Views
 		r.Get("/items/{id}/rankings", handlers.GetItemQueueRankingsHandler(db))
@@ -62,6 +69,20 @@ func NewServer(cfg *config.Config, db *gorm.DB) *Server {
 		r.Get("/history/items/{id}", handlers.GetItemHistoryHandler(db))
 		r.Get("/history/members/{id}", handlers.GetMemberHistoryHandler(db))
 	})
+
+	// Serve Static Single-Page React App (if web/dist exists)
+	distDir := "./web/dist"
+	if _, err := os.Stat(distDir); err == nil {
+		fileServer := http.FileServer(http.Dir(distDir))
+		r.Handle("/*", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			path := distDir + r.URL.Path
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				http.ServeFile(w, r, distDir+"/index.html")
+				return
+			}
+			fileServer.ServeHTTP(w, r)
+		}))
+	}
 
 	return &Server{
 		router: r,

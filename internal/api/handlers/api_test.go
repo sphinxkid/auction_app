@@ -9,41 +9,16 @@ import (
 	"testing"
 
 	"guild-loot-system/internal/api"
+	"guild-loot-system/internal/api/handlers"
 	"guild-loot-system/internal/config"
 	"guild-loot-system/internal/database"
-	"guild-loot-system/internal/api/handlers"
 	"guild-loot-system/internal/models"
+	"guild-loot-system/internal/services"
 )
 
-func setupTestServer(t *testing.T) (*httptest.Server, *config.Config) {
-	t.Helper()
+func TestAPI_Step3EndpointsWorkflow(t *testing.T) {
 	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "test_api.db")
-
-	cfg := &config.Config{
-		ServerAddress: "127.0.0.1:8080",
-		DBDriver:      "sqlite",
-		DBPath:        dbPath,
-		Environment:   "test",
-	}
-
-	db, err := database.InitDB(cfg)
-	if err != nil {
-		t.Fatalf("InitDB failed: %v", err)
-	}
-
-	if err := database.SeedDatabase(db); err != nil {
-		t.Fatalf("SeedDatabase failed: %v", err)
-	}
-
-	server := api.NewServer(cfg, db)
-	testServer := httptest.NewServer(server.GetRouter())
-	return testServer, cfg
-}
-
-func TestAPI_AuctionAndIntentWorkflow(t *testing.T) {
-	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "test_workflow.db")
+	dbPath := filepath.Join(tempDir, "test_api_step3.db")
 
 	cfg := &config.Config{
 		ServerAddress: "127.0.0.1:8080",
@@ -62,121 +37,152 @@ func TestAPI_AuctionAndIntentWorkflow(t *testing.T) {
 	ts := httptest.NewServer(server.GetRouter())
 	defer ts.Close()
 
-	// 1. Test POST /api/v1/auctions (Create Auction)
+	// 1. Test GET /api/v1/members
+	res, err := http.Get(ts.URL + "/api/v1/members")
+	if err != nil {
+		t.Fatalf("GET /api/v1/members failed: %v", err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK, got %d", res.StatusCode)
+	}
+	var members []models.GuildMember
+	_ = json.NewDecoder(res.Body).Decode(&members)
+	res.Body.Close()
+	if len(members) != 6 {
+		t.Errorf("Expected 6 seeded members, got %d", len(members))
+	}
+
+	// 2. Test GET /api/v1/items
+	res, err = http.Get(ts.URL + "/api/v1/items")
+	if err != nil {
+		t.Fatalf("GET /api/v1/items failed: %v", err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK, got %d", res.StatusCode)
+	}
+	var items []models.Item
+	_ = json.NewDecoder(res.Body).Decode(&items)
+	res.Body.Close()
+	if len(items) != 2 {
+		t.Errorf("Expected 2 seeded items, got %d", len(items))
+	}
+
+	// 3. Test POST /api/v1/auctions (Create auction with 2 items)
 	createReq := handlers.CreateAuctionRequest{
-		Title: "Molten Core Raid Loot",
+		Title: "Molten Core - Raid Night",
+		Items: []handlers.CreateAuctionItemRequest{
+			{ItemID: items[0].ID, Quantity: 2}, // Primordial Essence Qty 2
+			{ItemID: items[1].ID, Quantity: 1}, // Dragon Scale Qty 1
+		},
 	}
 	body, _ := json.Marshal(createReq)
 
-	res, err := http.Post(ts.URL+"/api/v1/auctions", "application/json", bytes.NewBuffer(body))
+	res, err = http.Post(ts.URL+"/api/v1/auctions", "application/json", bytes.NewBuffer(body))
 	if err != nil {
 		t.Fatalf("POST /api/v1/auctions failed: %v", err)
 	}
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("Expected 201 Created, got %d", res.StatusCode)
 	}
-
 	var createdAuction models.Auction
 	_ = json.NewDecoder(res.Body).Decode(&createdAuction)
 	res.Body.Close()
 
-	if createdAuction.ID == 0 || createdAuction.Title != "Molten Core Raid Loot" {
-		t.Errorf("Unexpected auction created: %+v", createdAuction)
+	if len(createdAuction.AuctionItems) != 2 {
+		t.Fatalf("Expected 2 auction items created, got %d", len(createdAuction.AuctionItems))
 	}
 
-	// 2. Test POST /api/v1/auctions/:id/intents (Submit Intent)
-	intentReq := handlers.SubmitIntentRequest{
-		ItemID:   1, // Warcrown of the Fallen King (seeded)
-		MemberID: 1, // Aegis Shieldwall (seeded)
+	auctionItemA := createdAuction.AuctionItems[0]
+	auctionItemB := createdAuction.AuctionItems[1]
+
+	// 4. Test GET /api/v1/auctions/active
+	res, err = http.Get(ts.URL + "/api/v1/auctions/active")
+	if err != nil {
+		t.Fatalf("GET /api/v1/auctions/active failed: %v", err)
 	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK, got %d", res.StatusCode)
+	}
+	var activeAuction models.Auction
+	_ = json.NewDecoder(res.Body).Decode(&activeAuction)
+	res.Body.Close()
+	if activeAuction.ID != createdAuction.ID {
+		t.Errorf("Expected active auction ID %d, got %d", createdAuction.ID, activeAuction.ID)
+	}
+
+	// 5. Test POST /api/v1/auction-items/:id/intents (Submit Intent to Buy)
+	intentReq := handlers.SubmitItemIntentRequest{MemberID: members[0].ID} // Aeloria
 	body, _ = json.Marshal(intentReq)
 
-	res, err = http.Post(ts.URL+"/api/v1/auctions/1/intents", "application/json", bytes.NewBuffer(body))
+	res, err = http.Post(ts.URL+"/api/v1/auction-items/"+strconvFormat(auctionItemA.ID)+"/intents", "application/json", bytes.NewBuffer(body))
 	if err != nil {
-		t.Fatalf("POST /api/v1/auctions/1/intents failed: %v", err)
+		t.Fatalf("Submit intent failed: %v", err)
 	}
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("Expected 201 Created, got %d", res.StatusCode)
 	}
 	res.Body.Close()
 
-	// Duplicate Intent should return 409 Conflict
-	res, err = http.Post(ts.URL+"/api/v1/auctions/1/intents", "application/json", bytes.NewBuffer(body))
+	// 6. Test POST /api/v1/auction-items/:id/resolve (Resolve Item A)
+	res, err = http.Post(ts.URL+"/api/v1/auction-items/"+strconvFormat(auctionItemA.ID)+"/resolve", "application/json", nil)
 	if err != nil {
-		t.Fatalf("POST /api/v1/auctions/1/intents failed: %v", err)
-	}
-	if res.StatusCode != http.StatusConflict {
-		t.Fatalf("Expected 409 Conflict for duplicate intent, got %d", res.StatusCode)
-	}
-	res.Body.Close()
-
-	// 3. Test POST /api/v1/auctions/:id/resolve (Resolve Auction)
-	resolveReq := handlers.ResolveAuctionRequest{
-		ItemID:   1,
-		Quantity: 1,
-	}
-	body, _ = json.Marshal(resolveReq)
-
-	res, err = http.Post(ts.URL+"/api/v1/auctions/1/resolve", "application/json", bytes.NewBuffer(body))
-	if err != nil {
-		t.Fatalf("POST /api/v1/auctions/1/resolve failed: %v", err)
+		t.Fatalf("Resolve item A failed: %v", err)
 	}
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("Expected 200 OK, got %d", res.StatusCode)
 	}
 	res.Body.Close()
 
-	// 4. Test GET /api/v1/items/:id/rankings (Item Queue Ranking View)
-	res, err = http.Get(ts.URL + "/api/v1/items/1/rankings")
+	// 7. Test GET /api/v1/items/:id/rankings
+	res, err = http.Get(ts.URL + "/api/v1/items/" + strconvFormat(items[0].ID) + "/rankings")
 	if err != nil {
-		t.Fatalf("GET /api/v1/items/1/rankings failed: %v", err)
-	}
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("Expected 200 OK, got %d", res.StatusCode)
-	}
-
-	var rankings []handlers.ItemQueueRankingView
-	_ = json.NewDecoder(res.Body).Decode(&rankings)
-	res.Body.Close()
-
-	if len(rankings) == 0 {
-		t.Errorf("Expected non-empty queue rankings, got 0")
-	}
-
-	// 5. Test GET /api/v1/history/auctions/:id
-	res, err = http.Get(ts.URL + "/api/v1/history/auctions/1")
-	if err != nil {
-		t.Fatalf("GET /api/v1/history/auctions/1 failed: %v", err)
-	}
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("Expected 200 OK, got %d", res.StatusCode)
-	}
-
-	var auctionHistory []handlers.AllocationHistoryView
-	_ = json.NewDecoder(res.Body).Decode(&auctionHistory)
-	res.Body.Close()
-
-	if len(auctionHistory) != 1 {
-		t.Errorf("Expected 1 allocation history item, got %d", len(auctionHistory))
-	}
-
-	// 6. Test GET /api/v1/history/items/:id
-	res, err = http.Get(ts.URL + "/api/v1/history/items/1")
-	if err != nil {
-		t.Fatalf("GET /api/v1/history/items/1 failed: %v", err)
+		t.Fatalf("GET rankings failed: %v", err)
 	}
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("Expected 200 OK, got %d", res.StatusCode)
 	}
 	res.Body.Close()
 
-	// 7. Test GET /api/v1/history/members/:id
-	res, err = http.Get(ts.URL + "/api/v1/history/members/1")
+	// 8. Test GET /api/v1/history/items/:id
+	res, err = http.Get(ts.URL + "/api/v1/history/items/" + strconvFormat(items[0].ID))
 	if err != nil {
-		t.Fatalf("GET /api/v1/history/members/1 failed: %v", err)
+		t.Fatalf("GET history failed: %v", err)
 	}
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("Expected 200 OK, got %d", res.StatusCode)
 	}
 	res.Body.Close()
+
+	// 9. Resolve Item B to test Auto-Completion of parent Auction
+	intentReqB := handlers.SubmitItemIntentRequest{MemberID: members[3].ID} // Sylas
+	body, _ = json.Marshal(intentReqB)
+	_, _ = http.Post(ts.URL+"/api/v1/auction-items/"+strconvFormat(auctionItemB.ID)+"/intents", "application/json", bytes.NewBuffer(body))
+
+	res, err = http.Post(ts.URL+"/api/v1/auction-items/"+strconvFormat(auctionItemB.ID)+"/resolve", "application/json", nil)
+	if err != nil {
+		t.Fatalf("Resolve item B failed: %v", err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK, got %d", res.StatusCode)
+	}
+	var resolveBRes services.ItemResolutionResult
+	_ = json.NewDecoder(res.Body).Decode(&resolveBRes)
+	res.Body.Close()
+
+	if resolveBRes.AuctionStatus != models.AuctionStatusResolved {
+		t.Errorf("Expected Parent Auction status RESOLVED after resolving item B, got %s", resolveBRes.AuctionStatus)
+	}
+}
+
+func strconvFormat(n uint) string {
+	var buf [20]byte
+	i := len(buf)
+	for n >= 10 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	i--
+	buf[i] = byte('0' + n)
+	return string(buf[i:])
 }

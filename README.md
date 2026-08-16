@@ -1,6 +1,6 @@
 # Guild Loot Queueing & Allocation System
 
-A Go backend system for managing predictable, repeatable guild raid loot via sequential auctions, three-tier priority queueing, explicit sequential integer re-ranking ($1..M$), and allocation history.
+A Full-Stack Go + React/TypeScript application for managing predictable, repeatable guild raid loot via granular item-by-item auction resolutions, three-tier priority queueing, explicit sequential integer re-ranking ($1..M$), and automated parent auction completion checks.
 
 ## Project Architecture
 
@@ -12,56 +12,73 @@ A Go backend system for managing predictable, repeatable guild raid loot via seq
 │   ├── api/
 │   │   ├── handlers/
 │   │   │   ├── api_test.go          # REST API integration tests
-│   │   │   ├── auction_handler.go   # Auction & intent HTTP handlers
+│   │   │   ├── auction_handler.go   # Auction & item intent HTTP handlers
 │   │   │   ├── history_handler.go   # Allocation history HTTP handlers
 │   │   │   ├── queue_handler.go     # Item queue rankings HTTP handler
 │   │   │   ├── health.go            # /health HTTP handler
 │   │   │   └── health_test.go       # Health unit tests
-│   │   └── server.go                # Chi router & server lifecycle
+│   │   └── server.go                # Chi router & static SPA server lifecycle
 │   ├── config/
 │   │   └── config.go                # Environment configuration
 │   ├── database/
 │   │   ├── database.go              # GORM SQLite connection & auto-migration
 │   │   ├── database_test.go         # Migration & seeder unit tests
-│   │   └── seeder.go                # Idempotent data seeder
+│   │   └── seeder.go                # Idempotent data seeder (6 members, 2 items)
 │   ├── models/
-│   │   └── models.go                # Domain models (GuildMember, Item, Auction, etc.)
+│   │   └── models.go                # Domain models (GuildMember, Item, Auction, AuctionItem, etc.)
 │   └── services/
-│       ├── allocation.go            # Core 3-tier allocation engine service
+│       ├── allocation.go            # Per-item 3-tier allocation engine & completion check
 │       └── allocation_test.go       # Allocation engine unit tests
-├── go.mod                           # Module definition
+├── web/                             # Single-Page React + TypeScript + Tailwind Test Console
+│   ├── src/
+│   │   ├── components/
+│   │   │   └── LootQueueConsole.tsx # Modern dark-mode test console
+│   │   ├── App.tsx
+│   │   └── main.tsx
+│   ├── dist/                        # Compiled production frontend SPA
+│   ├── package.json
+│   └── vite.config.ts
+├── go.mod                           # Go module definition
 └── README.md                        # System documentation
 ```
 
 ---
 
-## RESTful API Endpoints (`/api/v1`)
+## Seed Data
 
-### Auction Management
-- `POST /api/v1/auctions`: Create a new auction.
-  - Body: `{"title": "Sunwell Raid Loot", "auction_date": "2026-08-20T19:00:00Z"}`
-- `POST /api/v1/auctions/:id/intents`: Submit member "Intent to Buy".
-  - Body: `{"item_id": 1, "member_id": 2}`
-- `POST /api/v1/auctions/:id/resolve`: Process allocation engine & update global ranks $1..M$.
-  - Body: `{"item_id": 1, "quantity": 1}`
-
-### Queue & History Views
-- `GET /api/v1/items/:id/rankings`: Complete active queue ranking for an item (member name, rank, status, last won timestamp).
-- `GET /api/v1/history/auctions/:id`: Allocation history by auction ID.
-- `GET /api/v1/history/items/:id`: Allocation history by item ID.
-- `GET /api/v1/history/members/:id`: Allocation history by guild member ID.
-
-### System Health
-- `GET /health`: DB connectivity status.
+- **6 Guild Members**: Aeloria, Vorn, Kaelen, Sylas, Morrigan, Thalor.
+- **2 Repeatable Items**: "Primordial Essence" and "Dragon Scale".
 
 ---
 
-## How to Run & Test
+## RESTful API Endpoints (`/api/v1`)
+
+### Domain Queries
+- `GET /api/v1/members`: List all guild members.
+- `GET /api/v1/items`: List all available raid items.
+
+### Auction Management
+- `POST /api/v1/auctions`: Create auction with nested item quantities.
+  - Body: `{"title": "Raid Night - Molten Core", "items": [{"item_id": 1, "quantity": 2}, {"item_id": 2, "quantity": 1}]}`
+- `GET /api/v1/auctions/active`: Get active auction with nested `AuctionItems`, intent lists, and status.
+- `POST /api/v1/auction-items/:id/intents`: Toggle member intent to buy (`{"member_id": 1}`).
+- `POST /api/v1/auction-items/:id/resolve`: Resolve single item, allocate loot, update queue ranks $1..M$, and check parent auction completion.
+
+### Queue & History Views
+- `GET /api/v1/items/:id/rankings`: Complete active queue ranking for an item.
+- `GET /api/v1/history/items/:id`: Allocation history for an item.
+
+---
+
+## How to Run
 
 ```bash
-# Build and run the server
+# 1. Build the React frontend
+cd web && npm install && npm run build
+
+# 2. Start the Go backend server (serves API & SPA on http://127.0.0.1:8080)
 go run ./cmd/api
 
-# Run full unit & integration test suite
+# 3. Run full Go backend unit test suite
 go test -v ./...
 ```

@@ -52,6 +52,7 @@ func InitDB(cfg *config.Config) (*gorm.DB, error) {
 		&models.GuildMember{},
 		&models.Item{},
 		&models.Auction{},
+		&models.AuctionItem{},
 		&models.IntentToBuy{},
 		&models.ItemQueueRanking{},
 		&models.AllocationHistory{},
