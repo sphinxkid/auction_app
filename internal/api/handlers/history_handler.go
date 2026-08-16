@@ -72,7 +72,7 @@ func GetAuctionHistoryHandler(db *gorm.DB) http.HandlerFunc {
 		}
 
 		var histories []models.AllocationHistory
-		err = db.Preload("Auction").Preload("Item").Preload("Member").
+		err = db.Preload("Auction").Preload("Item").Preload("Member.Class").
 			Where("auction_id = ?", auctionID).
 			Order("allocated_at DESC").
 			Find(&histories).Error

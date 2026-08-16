@@ -288,9 +288,31 @@ func GetActiveAuctionHandler(db *gorm.DB) http.HandlerFunc {
 	}
 }
 
+// GetAuctionsHandler handles GET /api/v1/auctions (Lists all auctions)
+func GetAuctionsHandler(db *gorm.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		var auctions []models.Auction
+		err := db.Preload("AuctionItems.Item").
+			Preload("AuctionItems.Intents.Member.Class").
+			Order("auction_date DESC").
+			Find(&auctions).Error
+
+		if err != nil {
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(auctions)
+	}
+}
+
 // SubmitItemIntentRequest payload
 type SubmitItemIntentRequest struct {
 	MemberID uint `json:"member_id"`
+	Quantity int  `json:"quantity"`
 }
 
 // SubmitAuctionItemIntentHandler handles POST /api/v1/auction-items/{id}/intents
@@ -343,25 +365,33 @@ func SubmitAuctionItemIntentHandler(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
-		// Check if intent already exists (toggle support: if exists, remove it; if not, add it)
+		qty := req.Quantity
+		if qty <= 0 {
+			qty = 1
+		}
+
+		// Upsert intent: If intent already exists, update quantity; if not, create new
 		var existingIntent models.IntentToBuy
 		err = db.Where("auction_item_id = ? AND member_id = ?", auctionItemID, req.MemberID).First(&existingIntent).Error
 
 		if err == nil {
-			// Intent exists: remove it (toggle off)
-			if err := db.Delete(&existingIntent).Error; err != nil {
-				http.Error(w, `{"error":"failed to remove intent"}`, http.StatusInternalServerError)
+			// Update quantity
+			existingIntent.Quantity = qty
+			if err := db.Save(&existingIntent).Error; err != nil {
+				http.Error(w, `{"error":"failed to update intent quantity"}`, http.StatusInternalServerError)
 				return
 			}
+			_ = db.Preload("Member.Class").First(&existingIntent, existingIntent.ID)
 			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]string{"status": "removed"})
+			_ = json.NewEncoder(w).Encode(existingIntent)
 			return
 		}
 
-		// Intent does not exist: create it (toggle on)
+		// Intent does not exist: create it
 		intent := models.IntentToBuy{
 			AuctionItemID: uint(auctionItemID),
 			MemberID:      req.MemberID,
+			Quantity:      qty,
 			SubmittedAt:   time.Now().UTC(),
 		}
 
@@ -370,11 +400,60 @@ func SubmitAuctionItemIntentHandler(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
+		// Ensure member has an ItemQueueRanking entry for this item at the end of the queue (max_rank + 1)
+		var existingRanking models.ItemQueueRanking
+		if err := db.Where("item_id = ? AND member_id = ?", auctionItem.ItemID, req.MemberID).First(&existingRanking).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				var lastRanking models.ItemQueueRanking
+				maxRank := 0
+				if err := db.Where("item_id = ?", auctionItem.ItemID).Order("rank DESC").First(&lastRanking).Error; err == nil {
+					maxRank = lastRanking.Rank
+				}
+				newRanking := models.ItemQueueRanking{
+					ItemID:    auctionItem.ItemID,
+					MemberID:  req.MemberID,
+					Rank:      maxRank + 1,
+					Status:    models.QueueStatusWaiting,
+					UpdatedAt: time.Now().UTC(),
+				}
+				_ = db.Create(&newRanking)
+			}
+		}
+
 		// Preload member
-		_ = db.Preload("Member").First(&intent, intent.ID)
+		_ = db.Preload("Member.Class").First(&intent, intent.ID)
 
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(intent)
+	}
+}
+
+// RemoveAuctionItemIntentHandler handles DELETE /api/v1/auction-items/{id}/intents/{memberId}
+func RemoveAuctionItemIntentHandler(db *gorm.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		auctionItemIDStr := chi.URLParam(r, "id")
+		auctionItemID, err := strconv.ParseUint(auctionItemIDStr, 10, 32)
+		if err != nil {
+			http.Error(w, `{"error":"invalid auction item id"}`, http.StatusBadRequest)
+			return
+		}
+
+		memberIDStr := chi.URLParam(r, "memberId")
+		memberID, err := strconv.ParseUint(memberIDStr, 10, 32)
+		if err != nil {
+			http.Error(w, `{"error":"invalid member id"}`, http.StatusBadRequest)
+			return
+		}
+
+		if err := db.Where("auction_item_id = ? AND member_id = ?", auctionItemID, memberID).Delete(&models.IntentToBuy{}).Error; err != nil {
+			http.Error(w, `{"error":"failed to remove intent"}`, http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "removed"})
 	}
 }
 
@@ -464,6 +543,165 @@ func ResolveAuctionItemHandler(db *gorm.DB) http.HandlerFunc {
 
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(result)
+	}
+}
+
+type AddAuctionItemRequest struct {
+	ItemID   uint `json:"item_id"`
+	Quantity int  `json:"quantity"`
+}
+
+// AddAuctionItemHandler handles POST /api/v1/auctions/{id}/items
+func AddAuctionItemHandler(db *gorm.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		auctionIDStr := chi.URLParam(r, "id")
+		auctionID, err := strconv.ParseUint(auctionIDStr, 10, 32)
+		if err != nil {
+			http.Error(w, `{"error":"invalid auction id"}`, http.StatusBadRequest)
+			return
+		}
+
+		var req AddAuctionItemRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid request payload"}`, http.StatusBadRequest)
+			return
+		}
+
+		if req.ItemID == 0 {
+			http.Error(w, `{"error":"item_id is required"}`, http.StatusBadRequest)
+			return
+		}
+
+		// Verify auction exists and is active
+		var auction models.Auction
+		if err := db.First(&auction, auctionID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				http.Error(w, `{"error":"auction not found"}`, http.StatusNotFound)
+				return
+			}
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
+
+		if auction.Status != models.AuctionStatusActive {
+			http.Error(w, `{"error":"cannot add items to a resolved auction"}`, http.StatusConflict)
+			return
+		}
+
+		// Check if item already in auction
+		var existing models.AuctionItem
+		err = db.Where("auction_id = ? AND item_id = ?", auctionID, req.ItemID).First(&existing).Error
+		if err == nil {
+			http.Error(w, `{"error":"item is already in this auction"}`, http.StatusBadRequest)
+			return
+		}
+
+		qty := req.Quantity
+		if qty < 0 {
+			qty = 0
+		}
+
+		auctionItem := models.AuctionItem{
+			AuctionID: uint(auctionID),
+			ItemID:    req.ItemID,
+			Quantity:  qty,
+			Status:    models.AuctionItemStatusPending,
+		}
+
+		if err := db.Create(&auctionItem).Error; err != nil {
+			http.Error(w, `{"error":"failed to add item to auction"}`, http.StatusInternalServerError)
+			return
+		}
+
+		_ = db.Preload("Item").Preload("Intents.Member.Class").First(&auctionItem, auctionItem.ID)
+
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(auctionItem)
+	}
+}
+
+// DeleteAuctionItemHandler handles DELETE /api/v1/auction-items/{id}
+func DeleteAuctionItemHandler(db *gorm.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		auctionItemIDStr := chi.URLParam(r, "id")
+		auctionItemID, err := strconv.ParseUint(auctionItemIDStr, 10, 32)
+		if err != nil {
+			http.Error(w, `{"error":"invalid auction item id"}`, http.StatusBadRequest)
+			return
+		}
+
+		var auctionItem models.AuctionItem
+		if err := db.First(&auctionItem, auctionItemID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				http.Error(w, `{"error":"auction item not found"}`, http.StatusNotFound)
+				return
+			}
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
+
+		if auctionItem.Status == models.AuctionItemStatusResolved {
+			http.Error(w, `{"error":"cannot delete a resolved auction item"}`, http.StatusConflict)
+			return
+		}
+
+		// Delete associated intents first, then auction item
+		err = db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Where("auction_item_id = ?", auctionItemID).Delete(&models.IntentToBuy{}).Error; err != nil {
+				return err
+			}
+			return tx.Delete(&auctionItem).Error
+		})
+
+		if err != nil {
+			http.Error(w, `{"error":"failed to remove item from auction"}`, http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+	}
+}
+
+// FinalizeAuctionHandler handles POST /api/v1/auctions/{id}/finalize
+func FinalizeAuctionHandler(db *gorm.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		auctionIDStr := chi.URLParam(r, "id")
+		auctionID, err := strconv.ParseUint(auctionIDStr, 10, 32)
+		if err != nil {
+			http.Error(w, `{"error":"invalid auction id"}`, http.StatusBadRequest)
+			return
+		}
+
+		var auction models.Auction
+		if err := db.First(&auction, auctionID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				http.Error(w, `{"error":"auction not found"}`, http.StatusNotFound)
+				return
+			}
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
+
+		// Update auction status to RESOLVED
+		if err := db.Model(&auction).Update("status", models.AuctionStatusResolved).Error; err != nil {
+			http.Error(w, `{"error":"failed to finalize auction"}`, http.StatusInternalServerError)
+			return
+		}
+
+		// Preload relationships for response
+		_ = db.Preload("AuctionItems.Item").
+			Preload("AuctionItems.Intents.Member.Class").
+			First(&auction, auctionID)
+
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(auction)
 	}
 }
 

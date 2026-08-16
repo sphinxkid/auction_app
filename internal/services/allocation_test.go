@@ -1,6 +1,7 @@
 package services_test
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -129,20 +130,20 @@ func TestAllocationEngine_PerItemResolutionAndAutoCompletion(t *testing.T) {
 	if resB.AuctionItemStatus != models.AuctionItemStatusResolved {
 		t.Errorf("Expected Item B status RESOLVED, got %s", resB.AuctionItemStatus)
 	}
-	if resB.AuctionStatus != models.AuctionStatusResolved {
-		t.Errorf("Expected Parent Auction status RESOLVED after resolving 2/2 items, got %s", resB.AuctionStatus)
+	if resB.AuctionStatus != models.AuctionStatusActive {
+		t.Errorf("Expected Parent Auction status ACTIVE before manual finalization, got %s", resB.AuctionStatus)
 	}
 	if !resB.IsAuctionFullyResolved {
 		t.Errorf("Expected IsAuctionFullyResolved to be true after 2/2 items resolved")
 	}
 
-	// Verify Parent Auction Record in Database
+	// Verify Parent Auction Record remains ACTIVE until manual finalization
 	var updatedAuction models.Auction
 	if err := db.First(&updatedAuction, auction.ID).Error; err != nil {
 		t.Fatalf("Failed to fetch updated auction: %v", err)
 	}
-	if updatedAuction.Status != models.AuctionStatusResolved {
-		t.Errorf("DB Auction status expected RESOLVED, got %s", updatedAuction.Status)
+	if updatedAuction.Status != models.AuctionStatusActive {
+		t.Errorf("DB Auction status expected ACTIVE, got %s", updatedAuction.Status)
 	}
 }
 
@@ -190,5 +191,95 @@ func TestAllocationEngine_ZeroQuantityResolution(t *testing.T) {
 	}
 	if !res.IsAuctionFullyResolved {
 		t.Errorf("Expected parent auction to be fully resolved")
+	}
+}
+
+func TestAllocationEngine_RankPreservationAndShift(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test_rank_preservation.db")
+
+	cfg := &config.Config{
+		ServerAddress: "127.0.0.1:8080",
+		DBDriver:      "sqlite",
+		DBPath:        dbPath,
+		Environment:   "test",
+	}
+
+	db, err := database.InitDB(cfg)
+	if err != nil {
+		t.Fatalf("InitDB failed: %v", err)
+	}
+
+	// Create 9 members
+	members := make([]models.GuildMember, 9)
+	for i := 0; i < 9; i++ {
+		members[i] = models.GuildMember{Name: fmt.Sprintf("Member %d", i+1), DiscordID: fmt.Sprintf("m%d#0000", i+1)}
+	}
+	db.Create(&members)
+
+	item := models.Item{Name: "Sulfuras", Description: "Hammer of Ragnaros", IsRepeatable: true}
+	db.Create(&item)
+
+	// Pre-seed 5 queue rankings:
+	// Ranks 1..4: WAITING (members 1..4)
+	// Rank 5: Member A (members[4]), PAST_WINNER
+	now := time.Now().UTC()
+	for i := 0; i < 4; i++ {
+		db.Create(&models.ItemQueueRanking{
+			ItemID:   item.ID,
+			MemberID: members[i].ID,
+			Rank:     i + 1,
+			Status:   models.QueueStatusWaiting,
+		})
+	}
+	memA := members[4]
+	db.Create(&models.ItemQueueRanking{
+		ItemID:    item.ID,
+		MemberID:  memA.ID,
+		Rank:      5,
+		Status:    models.QueueStatusPastWinner,
+		LastWonAt: &now,
+	})
+
+	// Create auction with Quantity = 3
+	auction := models.Auction{Title: "Raid Night", Status: models.AuctionStatusActive, AuctionDate: now}
+	db.Create(&auction)
+
+	auctionItem := models.AuctionItem{
+		AuctionID: auction.ID,
+		ItemID:    item.ID,
+		Quantity:  3,
+		Status:    models.AuctionItemStatusPending,
+	}
+	db.Create(&auctionItem)
+
+	// All 9 members submit intent to buy (including 4 brand new applicants: members 5..8)
+	for _, m := range members {
+		db.Create(&models.IntentToBuy{
+			AuctionItemID: auctionItem.ID,
+			MemberID:      m.ID,
+			Quantity:      1,
+			SubmittedAt:   now,
+		})
+	}
+
+	service := services.NewAllocationService(db)
+	res, err := service.ResolveAuctionItem(auctionItem.ID)
+	if err != nil {
+		t.Fatalf("ResolveAuctionItem failed: %v", err)
+	}
+
+	if res.AllocatedQuantity != 3 {
+		t.Fatalf("Expected 3 allocated items, got %d", res.AllocatedQuantity)
+	}
+
+	// Verify Member A (memA) is now ranked #2 (since 3 members ahead won and moved to the end)!
+	var memARanking models.ItemQueueRanking
+	if err := db.Where("item_id = ? AND member_id = ?", item.ID, memA.ID).First(&memARanking).Error; err != nil {
+		t.Fatalf("Failed to fetch Member A ranking: %v", err)
+	}
+
+	if memARanking.Rank != 2 {
+		t.Errorf("Expected Member A to be ranked 2 after 3 winners resolved, got rank %d", memARanking.Rank)
 	}
 }

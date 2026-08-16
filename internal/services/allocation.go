@@ -81,106 +81,115 @@ func (s *AllocationService) ResolveAuctionItem(auctionItemID uint) (*ItemResolut
 			intentMemberIDs[i] = intent.MemberID
 		}
 
-		// 3. Fetch existing ItemQueueRanking records for this ItemID
+		// 3. Fetch existing ItemQueueRanking records for this ItemID ordered by Rank ASC
 		var existingRankings []models.ItemQueueRanking
-		if err := tx.Where("item_id = ?", itemID).Find(&existingRankings).Error; err != nil {
+		if err := tx.Where("item_id = ?", itemID).Order("rank ASC").Find(&existingRankings).Error; err != nil {
 			return fmt.Errorf("failed to fetch item queue rankings: %w", err)
 		}
 
 		existingRankingMap := make(map[uint]*models.ItemQueueRanking)
+		maxRank := 0
 		for i := range existingRankings {
 			existingRankingMap[existingRankings[i].MemberID] = &existingRankings[i]
-		}
-
-		// 4. Partition intent submitters into 3 Tiers
-		var tier1 []uint // Waiters (Status="WAITING"), sorted by current Rank ASC
-		var tier2 []uint // New Applicants (no record in ItemQueueRanking), cryptographically shuffled
-		var tier3 []uint // Past Winners (Status="PAST_WINNER"), sorted by LastWonAt ASC
-
-		type waiterCandidate struct {
-			memberID uint
-			rank     int
-		}
-		var tier1Candidates []waiterCandidate
-
-		type winnerCandidate struct {
-			memberID  uint
-			lastWonAt time.Time
-		}
-		var tier3Candidates []winnerCandidate
-
-		for _, memberID := range intentMemberIDs {
-			ranking, exists := existingRankingMap[memberID]
-			if !exists {
-				// Tier 2: New Applicant
-				tier2 = append(tier2, memberID)
-			} else if ranking.Status == models.QueueStatusWaiting {
-				// Tier 1: Waiter
-				tier1Candidates = append(tier1Candidates, waiterCandidate{
-					memberID: memberID,
-					rank:     ranking.Rank,
-				})
-			} else if ranking.Status == models.QueueStatusPastWinner {
-				// Tier 3: Past Winner
-				t := time.Time{}
-				if ranking.LastWonAt != nil {
-					t = *ranking.LastWonAt
-				}
-				tier3Candidates = append(tier3Candidates, winnerCandidate{
-					memberID:  memberID,
-					lastWonAt: t,
-				})
+			if existingRankings[i].Rank > maxRank {
+				maxRank = existingRankings[i].Rank
 			}
 		}
 
-		// Sort Tier 1 by Rank ASC
-		sort.Slice(tier1Candidates, func(i, j int) bool {
-			return tier1Candidates[i].rank < tier1Candidates[j].rank
-		})
-		for _, c := range tier1Candidates {
-			tier1 = append(tier1, c.memberID)
+		// 4. Identify new applicants (members submitting intent who have no queue ranking entry yet)
+		var newApplicantIDs []uint
+		for _, memberID := range intentMemberIDs {
+			if _, exists := existingRankingMap[memberID]; !exists {
+				newApplicantIDs = append(newApplicantIDs, memberID)
+			}
 		}
 
-		// Cryptographically shuffle Tier 2 (New Applicants)
-		if len(tier2) > 1 {
-			if err := cryptoShuffle(tier2); err != nil {
+		// Cryptographically shuffle new applicants if more than 1
+		if len(newApplicantIDs) > 1 {
+			if err := cryptoShuffle(newApplicantIDs); err != nil {
 				return fmt.Errorf("failed to shuffle new applicants: %w", err)
 			}
 		}
 
-		// Sort Tier 3 by LastWonAt ASC (oldest winner first)
-		sort.Slice(tier3Candidates, func(i, j int) bool {
-			return tier3Candidates[i].lastWonAt.Before(tier3Candidates[j].lastWonAt)
-		})
-		for _, c := range tier3Candidates {
-			tier3 = append(tier3, c.memberID)
+		// Create queue ranking entries for new applicants at the END of the queue (preserving existing ranks)
+		var fullQueue []*models.ItemQueueRanking
+		for i := range existingRankings {
+			fullQueue = append(fullQueue, &existingRankings[i])
 		}
 
-		// Merge into candidate order: [Tier 1] + [Tier 2] + [Tier 3]
-		candidates := append([]uint{}, tier1...)
-		candidates = append(candidates, tier2...)
-		candidates = append(candidates, tier3...)
+		for _, memberID := range newApplicantIDs {
+			maxRank++
+			newRanking := models.ItemQueueRanking{
+				ItemID:    itemID,
+				MemberID:  memberID,
+				Rank:      maxRank,
+				Status:    models.QueueStatusWaiting,
+				UpdatedAt: time.Now().UTC(),
+			}
+			fullQueue = append(fullQueue, &newRanking)
+			existingRankingMap[memberID] = &newRanking
+		}
 
-		// 5. Determine Winners & Create Allocations
+		// 5. Partition INTENT SUBMITTERS into Candidate Tiers for Winner Selection
+		// Priority 1: WAITING candidates, ordered by current Rank ASC
+		// Priority 2: PAST_WINNER candidates, ordered by LastWonAt ASC (oldest winner first; if equal, by Rank ASC)
+		var waitingCandidates []*models.ItemQueueRanking
+		var winnerCandidates []*models.ItemQueueRanking
+
+		for _, memberID := range intentMemberIDs {
+			ranking := existingRankingMap[memberID]
+			if ranking.Status == models.QueueStatusWaiting {
+				waitingCandidates = append(waitingCandidates, ranking)
+			} else {
+				winnerCandidates = append(winnerCandidates, ranking)
+			}
+		}
+
+		// Sort WAITING candidates by Rank ASC
+		sort.Slice(waitingCandidates, func(i, j int) bool {
+			return waitingCandidates[i].Rank < waitingCandidates[j].Rank
+		})
+
+		// Sort PAST_WINNER candidates by LastWonAt ASC
+		sort.Slice(winnerCandidates, func(i, j int) bool {
+			tI := time.Time{}
+			if winnerCandidates[i].LastWonAt != nil {
+				tI = *winnerCandidates[i].LastWonAt
+			}
+			tJ := time.Time{}
+			if winnerCandidates[j].LastWonAt != nil {
+				tJ = *winnerCandidates[j].LastWonAt
+			}
+			if tI.Equal(tJ) {
+				return winnerCandidates[i].Rank < winnerCandidates[j].Rank
+			}
+			return tI.Before(tJ)
+		})
+
+		// Merge candidates: WAITING candidates first, then PAST_WINNER candidates
+		candidates := append([]*models.ItemQueueRanking{}, waitingCandidates...)
+		candidates = append(candidates, winnerCandidates...)
+
+		// 6. Determine Winners & Create Allocations
 		allocatedCount := quantity
 		if len(candidates) < quantity {
 			allocatedCount = len(candidates)
 		}
 
-		winners := candidates[:allocatedCount]
+		winningCandidates := candidates[:allocatedCount]
 		winnerSet := make(map[uint]bool)
-		for _, w := range winners {
-			winnerSet[w] = true
+		for _, w := range winningCandidates {
+			winnerSet[w.MemberID] = true
 		}
 
 		now := time.Now().UTC()
 
 		allocations := []models.AllocationHistory{}
-		for _, winnerID := range winners {
+		for _, winner := range winningCandidates {
 			alloc := models.AllocationHistory{
 				AuctionID:         auctionID,
 				ItemID:            itemID,
-				MemberID:          winnerID,
+				MemberID:          winner.MemberID,
 				AllocatedQuantity: 1,
 				AllocatedAt:       now,
 			}
@@ -190,89 +199,34 @@ func (s *AllocationService) ResolveAuctionItem(auctionItemID uint) (*ItemResolut
 			allocations = append(allocations, alloc)
 		}
 
-		// 6. Update & Re-Index Full ItemQueueRanking for ItemID
-		allMembersMap := make(map[uint]*models.ItemQueueRanking)
-		for memberID, ranking := range existingRankingMap {
-			r := *ranking
-			allMembersMap[memberID] = &r
-		}
+		// 7. Update Winner Statuses & Re-Index Queue Ranks to Preserve Relative Order
+		// Non-winners keep their relative queue order and shift up.
+		// Winners are moved to the VERY END of the queue.
+		var nonWinnersQueue []*models.ItemQueueRanking
+		var winnersQueue []*models.ItemQueueRanking
 
-		// Insert/update new applicants or winners
-		for _, memberID := range intentMemberIDs {
-			if _, exists := allMembersMap[memberID]; !exists {
-				allMembersMap[memberID] = &models.ItemQueueRanking{
-					ItemID:   itemID,
-					MemberID: memberID,
-					Status:   models.QueueStatusWaiting,
-				}
-			}
-		}
-
-		// Apply Allocation updates
-		for memberID, ranking := range allMembersMap {
-			if winnerSet[memberID] {
+		for _, ranking := range fullQueue {
+			if winnerSet[ranking.MemberID] {
 				ranking.Status = models.QueueStatusPastWinner
 				t := now
 				ranking.LastWonAt = &t
+				winnersQueue = append(winnersQueue, ranking)
 			} else {
-				if ranking.ID == 0 {
-					ranking.Status = models.QueueStatusWaiting
-				}
+				nonWinnersQueue = append(nonWinnersQueue, ranking)
 			}
 		}
 
-		// Group all records for explicit re-ranking
-		var waitingList []*models.ItemQueueRanking
-		var winnerList []*models.ItemQueueRanking
-
-		tier2OrderMap := make(map[uint]int)
-		for idx, memberID := range tier2 {
-			tier2OrderMap[memberID] = idx
-		}
-
-		for _, r := range allMembersMap {
-			if r.Status == models.QueueStatusWaiting {
-				waitingList = append(waitingList, r)
-			} else {
-				winnerList = append(winnerList, r)
-			}
-		}
-
-		// Sort WAITING list
-		sort.Slice(waitingList, func(i, j int) bool {
-			rI := waitingList[i]
-			rJ := waitingList[j]
-
-			isNewI := rI.ID == 0
-			isNewJ := rJ.ID == 0
-
-			if !isNewI && !isNewJ {
-				return rI.Rank < rJ.Rank
-			}
-			if isNewI && isNewJ {
-				return tier2OrderMap[rI.MemberID] < tier2OrderMap[rJ.MemberID]
-			}
-			return !isNewI
+		// Sort winners by current Rank ASC before appending to end
+		sort.Slice(winnersQueue, func(i, j int) bool {
+			return winnersQueue[i].Rank < winnersQueue[j].Rank
 		})
 
-		// Sort PAST_WINNER list
-		sort.Slice(winnerList, func(i, j int) bool {
-			tI := time.Time{}
-			if winnerList[i].LastWonAt != nil {
-				tI = *winnerList[i].LastWonAt
-			}
-			tJ := time.Time{}
-			if winnerList[j].LastWonAt != nil {
-				tJ = *winnerList[j].LastWonAt
-			}
-			return tI.Before(tJ)
-		})
-
-		fullReRankedList := append([]*models.ItemQueueRanking{}, waitingList...)
-		fullReRankedList = append(fullReRankedList, winnerList...)
+		// Combine: non-winners first, winners at the end
+		reIndexedQueue := append([]*models.ItemQueueRanking{}, nonWinnersQueue...)
+		reIndexedQueue = append(reIndexedQueue, winnersQueue...)
 
 		updatedRankings := []models.ItemQueueRanking{}
-		for idx, ranking := range fullReRankedList {
+		for idx, ranking := range reIndexedQueue {
 			ranking.Rank = idx + 1
 			ranking.UpdatedAt = now
 
@@ -284,7 +238,7 @@ func (s *AllocationService) ResolveAuctionItem(auctionItemID uint) (*ItemResolut
 
 		// 6b. Record ItemRankHistory snapshots for each member in the queue for this item
 		rankSnapshots := []models.ItemRankHistory{}
-		for _, ranking := range fullReRankedList {
+		for _, ranking := range reIndexedQueue {
 			snapshot := models.ItemRankHistory{
 				AuctionID:     auctionID,
 				AuctionItemID: auctionItemID,
@@ -308,7 +262,7 @@ func (s *AllocationService) ResolveAuctionItem(auctionItemID uint) (*ItemResolut
 			return fmt.Errorf("failed to update auction item status: %w", err)
 		}
 
-		// 8. Auction State Verification Check: Check if all items in parent auction are RESOLVED
+		// 8. Auction State Verification Check: Count remaining pending items
 		var remainingPending int64
 		if err := tx.Model(&models.AuctionItem{}).
 			Where("auction_id = ? AND status != ?", auctionID, models.AuctionItemStatusResolved).
@@ -316,24 +270,16 @@ func (s *AllocationService) ResolveAuctionItem(auctionItemID uint) (*ItemResolut
 			return fmt.Errorf("failed to count pending auction items: %w", err)
 		}
 
+		// Resolving each item drop does NOT automatically resolve/close the entire raid auction.
+		// The parent auction remains ACTIVE until manually finalized by raid leader.
 		auctionStatus := models.AuctionStatusActive
-		isFullyResolved := false
-
-		if remainingPending == 0 {
-			auctionStatus = models.AuctionStatusResolved
-			isFullyResolved = true
-			if err := tx.Model(&models.Auction{}).
-				Where("id = ?", auctionID).
-				Update("status", models.AuctionStatusResolved).Error; err != nil {
-				return fmt.Errorf("failed to update parent auction status: %w", err)
-			}
-		}
+		isFullyResolved := (remainingPending == 0)
 
 		result = ItemResolutionResult{
 			AuctionID:              auctionID,
 			AuctionItemID:          auctionItemID,
 			ItemID:                 itemID,
-			AllocatedQuantity:      len(winners),
+			AllocatedQuantity:      len(winningCandidates),
 			AuctionItemStatus:      models.AuctionItemStatusResolved,
 			AuctionStatus:          auctionStatus,
 			IsAuctionFullyResolved: isFullyResolved,

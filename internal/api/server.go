@@ -58,12 +58,17 @@ func NewServer(cfg *config.Config, db *gorm.DB) *Server {
 		r.Post("/items", handlers.CreateItemHandler(db))
 
 		// Auction Management
+		r.Get("/auctions", handlers.GetAuctionsHandler(db))
 		r.Post("/auctions", handlers.CreateAuctionHandler(db))
 		r.Get("/auctions/active", handlers.GetActiveAuctionHandler(db))
+		r.Post("/auctions/{id}/items", handlers.AddAuctionItemHandler(db))
+		r.Post("/auctions/{id}/finalize", handlers.FinalizeAuctionHandler(db))
 
 		// AuctionItem Quantity, Intents & Resolution
 		r.Patch("/auction-items/{id}/quantity", handlers.UpdateAuctionItemQuantityHandler(db))
+		r.Delete("/auction-items/{id}", handlers.DeleteAuctionItemHandler(db))
 		r.Post("/auction-items/{id}/intents", handlers.SubmitAuctionItemIntentHandler(db))
+		r.Delete("/auction-items/{id}/intents/{memberId}", handlers.RemoveAuctionItemIntentHandler(db))
 		r.Post("/auction-items/{id}/resolve", handlers.ResolveAuctionItemHandler(db))
 
 		// Queue & Ranking Views

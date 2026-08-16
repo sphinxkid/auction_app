@@ -26,6 +26,7 @@ import {
   X,
   PlusCircle,
   ChevronRight,
+  ChevronLeft,
   Package,
   Calendar,
   Zap,
@@ -60,6 +61,7 @@ interface IntentToBuy {
   id: number;
   auction_item_id: number;
   member_id: number;
+  quantity?: number;
   submitted_at: string;
   member?: Member;
 }
@@ -139,13 +141,15 @@ interface ItemRankHistoryItem {
 }
 
 type MainPage = 'auctions' | 'members' | 'items';
-type AuctionSubView = 'active' | 'create';
+type AuctionSubView = 'active' | 'create' | 'history';
+type ActiveAuctionSubPage = 'edit' | 'intent' | 'allocation' | 'resolution' | 'summary' | 'finalize';
 type MemberSubView = 'roster' | 'add_member' | 'add_class';
+type ItemSubView = 'list' | 'rank_history' | 'priority_queue';
 
 interface DraftAuctionItem {
   item_id: number;
   item_name: string;
-  quantity: number;
+  quantity: string;
 }
 
 // Preset Swatch Colors for Guild Classes
@@ -166,10 +170,76 @@ export const LootQueueConsole: React.FC = () => {
   // Navigation Page & SubView State
   const [activePage, setActivePage] = useState<MainPage>('auctions');
   const [auctionSubView, setAuctionSubView] = useState<AuctionSubView>('active');
+  const [activeAuctionSubPage, setActiveAuctionSubPage] = useState<ActiveAuctionSubPage>('edit');
+  const [summaryItemIndex, setSummaryItemIndex] = useState<number>(0);
+
+  // Auction History States
+  const [allAuctions, setAllAuctions] = useState<Auction[]>([]);
+  const [selectedHistoryAuctionId, setSelectedHistoryAuctionId] = useState<number | null>(null);
+  const [historyAllocationRecords, setHistoryAllocationRecords] = useState<AllocationHistoryItem[]>([]);
+  const [historyAuctionItemIndex, setHistoryAuctionItemIndex] = useState<number>(0);
+
   const [memberSubView, setMemberSubView] = useState<MemberSubView>('roster');
+  const [itemSubView, setItemSubView] = useState<ItemSubView>('list');
 
   const [classes, setClasses] = useState<GuildClass[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
+
+  // Fetch all auctions for Auction History page
+  const fetchAllAuctions = async () => {
+    try {
+      const res = await fetch('/api/v1/auctions');
+      if (res.ok) {
+        const data: Auction[] = await res.json();
+        setAllAuctions(data);
+        if (data && data.length > 0 && selectedHistoryAuctionId === null) {
+          setSelectedHistoryAuctionId(data[0].id);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch all auctions:', err);
+    }
+  };
+
+  // Fetch allocation records for selected history auction
+  const fetchAuctionHistoryRecords = async (auctionId: number) => {
+    try {
+      const res = await fetch(`/api/v1/history/auctions/${auctionId}`);
+      if (res.ok) {
+        const records: AllocationHistoryItem[] = await res.json();
+        setHistoryAllocationRecords(records);
+      }
+    } catch (err) {
+      console.error('Failed to fetch auction history records:', err);
+    }
+  };
+
+  // Fetch allocation records for active auction
+  const [activeAuctionAllocationRecords, setActiveAuctionAllocationRecords] = useState<AllocationHistoryItem[]>([]);
+  const fetchActiveAuctionHistory = async (auctionId: number) => {
+    try {
+      const res = await fetch(`/api/v1/history/auctions/${auctionId}`);
+      if (res.ok) {
+        const records: AllocationHistoryItem[] = await res.json();
+        setActiveAuctionAllocationRecords(records);
+      }
+    } catch (err) {
+      console.error('Failed to fetch active auction history records:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchInitialData();
+    fetchAllAuctions();
+  }, []);
+
+  useEffect(() => {
+    if (selectedHistoryAuctionId) {
+      fetchAuctionHistoryRecords(selectedHistoryAuctionId);
+      setHistoryAuctionItemIndex(0);
+    }
+  }, [selectedHistoryAuctionId]);
+
   const [items, setItems] = useState<Item[]>([]);
   const [activeAuction, setActiveAuction] = useState<Auction | null>(null);
 
@@ -177,22 +247,25 @@ export const LootQueueConsole: React.FC = () => {
   const [newTitle, setNewTitle] = useState('Raid Night - Molten Core');
   const [newAuctionDate, setNewAuctionDate] = useState<string>('');
   
-  // Searchable Item Selection for Draft Auction
+  // Searchable Item Selection for Draft Auction & Edit Auction
   const [itemSearchQuery, setItemSearchQuery] = useState('');
   const [selectedCatalogItemId, setSelectedCatalogItemId] = useState<number | null>(null);
-  const [initialQuantityInput, setInitialQuantityInput] = useState<number>(0);
+  const [editAuctionAddItemId, setEditAuctionAddItemId] = useState<number | null>(null);
   const [draftAuctionItems, setDraftAuctionItems] = useState<DraftAuctionItem[]>([]);
 
-  // Create New Item Form state & Toggle
-  const [showCreateItemForm, setShowCreateItemForm] = useState(false);
+  // Create New Item Form state
   const [newItemName, setNewItemName] = useState('');
   const [newItemDesc, setNewItemDesc] = useState('');
   const [newItemRepeatable, setNewItemRepeatable] = useState(true);
 
-  // Intent Submission Tab State
+  // Intent Submission Tab State (Member-Centric: Member -> Item -> Quantity)
   const [memberSearchQuery, setMemberSearchQuery] = useState('');
   const [selectedMemberId, setSelectedMemberId] = useState<number | null>(null);
   const [selectedAuctionItemId, setSelectedAuctionItemId] = useState<number | null>(null);
+  const [intentQuantityInput, setIntentQuantityInput] = useState<string>('1');
+
+  // Item Allocation Sub-Page Local Quantity Inputs Map (Allows empty string state)
+  const [allocationQtyInputs, setAllocationQtyInputs] = useState<{ [auctionItemId: number]: string }>({});
 
   // Queue & Audit Panel state
   const [selectedQueueItemId, setSelectedQueueItemId] = useState<number>(1);
@@ -250,6 +323,7 @@ export const LootQueueConsole: React.FC = () => {
         setItems(fetchedItems);
         if (fetchedItems.length > 0) {
           if (!selectedCatalogItemId) setSelectedCatalogItemId(fetchedItems[0].id);
+          if (!editAuctionAddItemId) setEditAuctionAddItemId(fetchedItems[0].id);
           if (!selectedQueueItemId) setSelectedQueueItemId(fetchedItems[0].id);
         }
       }
@@ -258,6 +332,7 @@ export const LootQueueConsole: React.FC = () => {
         const auctionData = await activeAuctionRes.json();
         if (auctionData && auctionData.id) {
           setActiveAuction(auctionData);
+          fetchActiveAuctionHistory(auctionData.id);
           if (auctionData.auction_items && auctionData.auction_items.length > 0) {
             setSelectedAuctionItemId(auctionData.auction_items[0].id);
           }
@@ -294,6 +369,12 @@ export const LootQueueConsole: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    if (activeAuction?.id) {
+      fetchActiveAuctionHistory(activeAuction.id);
+    }
+  }, [activeAuction?.id, activeAuctionSubPage]);
+
+  useEffect(() => {
     if (selectedQueueItemId) {
       fetchQueueAndHistory(selectedQueueItemId);
     }
@@ -307,6 +388,19 @@ export const LootQueueConsole: React.FC = () => {
       }
     }
   }, [activeAuction]);
+
+  // Sync intentQuantityInput with existing member intent if present
+  useEffect(() => {
+    if (selectedMemberId && selectedAuctionItemId && activeAuction?.auction_items) {
+      const ai = activeAuction.auction_items.find((item) => item.id === selectedAuctionItemId);
+      const existingIntent = ai?.intents?.find((intent) => intent.member_id === selectedMemberId);
+      if (existingIntent && existingIntent.quantity !== undefined && existingIntent.quantity > 0) {
+        setIntentQuantityInput(String(existingIntent.quantity));
+      } else {
+        setIntentQuantityInput('1');
+      }
+    }
+  }, [selectedMemberId, selectedAuctionItemId, activeAuction]);
 
   const showMsg = (type: 'success' | 'error', text: string) => {
     setMessage({ type, text });
@@ -348,7 +442,7 @@ export const LootQueueConsole: React.FC = () => {
       {
         item_id: itemObj.id,
         item_name: itemObj.name,
-        quantity: Math.max(0, initialQuantityInput),
+        quantity: '0',
       },
     ]);
 
@@ -360,11 +454,70 @@ export const LootQueueConsole: React.FC = () => {
     setDraftAuctionItems(draftAuctionItems.filter((di) => di.item_id !== itemId));
   };
 
+  // Add Item directly to running Active Auction
+  const handleAddActiveAuctionItem = async () => {
+    if (!activeAuction || !editAuctionAddItemId) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/v1/auctions/${activeAuction.id}/items`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_id: editAuctionAddItemId, quantity: 0 }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to add item to active auction');
+      }
+
+      showMsg('success', 'Item successfully added to running active auction!');
+
+      // Refresh active auction
+      const activeRes = await fetch('/api/v1/auctions/active');
+      if (activeRes.ok) {
+        const updatedAuction = await activeRes.json();
+        setActiveAuction(updatedAuction && updatedAuction.id ? updatedAuction : null);
+      }
+    } catch (err: any) {
+      showMsg('error', err.message || 'Failed to add item to auction');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Delete Item from running Active Auction
+  const handleDeleteActiveAuctionItem = async (auctionItemId: number) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/v1/auction-items/${auctionItemId}`, {
+        method: 'DELETE',
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to delete item from auction');
+      }
+
+      showMsg('success', 'Removed item from active auction.');
+
+      // Refresh active auction
+      const activeRes = await fetch('/api/v1/auctions/active');
+      if (activeRes.ok) {
+        const updatedAuction = await activeRes.json();
+        setActiveAuction(updatedAuction && updatedAuction.id ? updatedAuction : null);
+      }
+    } catch (err: any) {
+      showMsg('error', err.message || 'Failed to remove item');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Update Quantity of Item in Draft List
-  const handleUpdateDraftQuantity = (itemId: number, newQty: number) => {
+  const handleUpdateDraftQuantity = (itemId: number, newQtyStr: string) => {
     setDraftAuctionItems(
       draftAuctionItems.map((di) =>
-        di.item_id === itemId ? { ...di, quantity: Math.max(0, newQty) } : di
+        di.item_id === itemId ? { ...di, quantity: newQtyStr } : di
       )
     );
   };
@@ -382,6 +535,19 @@ export const LootQueueConsole: React.FC = () => {
       return;
     }
 
+    // Validation for empty quantity text boxes in draft list
+    for (const di of draftAuctionItems) {
+      if (di.quantity.trim() === '') {
+        showMsg('error', `Quantity text box cannot be empty for item "${di.item_name}".`);
+        return;
+      }
+      const parsed = parseInt(di.quantity, 10);
+      if (isNaN(parsed) || parsed < 0) {
+        showMsg('error', `Please enter a valid non-negative quantity for item "${di.item_name}".`);
+        return;
+      }
+    }
+
     setLoading(true);
     try {
       const res = await fetch('/api/v1/auctions', {
@@ -392,7 +558,7 @@ export const LootQueueConsole: React.FC = () => {
           auction_date: newAuctionDate ? newAuctionDate : undefined,
           items: draftAuctionItems.map((di) => ({
             item_id: di.item_id,
-            quantity: di.quantity,
+            quantity: parseInt(di.quantity, 10),
           })),
         }),
       });
@@ -414,6 +580,7 @@ export const LootQueueConsole: React.FC = () => {
       setDraftAuctionItems([]);
       setNewAuctionDate('');
       setAuctionSubView('active');
+      setActiveAuctionSubPage('edit');
     } catch (err: any) {
       showMsg('error', err.message || 'Failed to launch auction');
     } finally {
@@ -488,7 +655,6 @@ export const LootQueueConsole: React.FC = () => {
       showMsg('success', `Successfully created new raid item "${createdItem.name}"!`);
       setNewItemName('');
       setNewItemDesc('');
-      setShowCreateItemForm(false);
     } catch (err: any) {
       showMsg('error', err.message || 'Failed to create item');
     } finally {
@@ -496,7 +662,7 @@ export const LootQueueConsole: React.FC = () => {
     }
   };
 
-  // Update Item Quantity in Active Auction
+  // Update Item Quantity in Active Auction (API helper)
   const handleUpdateItemQuantity = async (auctionItemId: number, newQty: number) => {
     if (newQty < 0) return;
     setLoading(true);
@@ -511,7 +677,7 @@ export const LootQueueConsole: React.FC = () => {
         throw new Error(err.error || 'Failed to update item quantity');
       }
 
-      showMsg('success', `Updated item drop quantity to ${newQty}!`);
+      showMsg('success', `Finalized and updated item drop quantity to ${newQty}!`);
 
       // Refresh active auction
       const activeRes = await fetch('/api/v1/auctions/active');
@@ -526,14 +692,41 @@ export const LootQueueConsole: React.FC = () => {
     }
   };
 
-  // Toggle Intent to Buy (Submit or Remove Intent)
+  // Finalize Item Allocation Quantity Handler with Non-Empty Validation
+  const handleFinalizeAllocationQuantity = async (auctionItemId: number, itemName: string, currentQty: number) => {
+    const rawVal = allocationQtyInputs[auctionItemId] !== undefined ? allocationQtyInputs[auctionItemId] : String(currentQty);
+    if (rawVal === undefined || rawVal.trim() === '') {
+      showMsg('error', `Quantity text box cannot be empty upon finalization for "${itemName}".`);
+      return;
+    }
+
+    const parsed = parseInt(rawVal, 10);
+    if (isNaN(parsed) || parsed < 0) {
+      showMsg('error', `Please enter a valid drop quantity number for "${itemName}".`);
+      return;
+    }
+
+    await handleUpdateItemQuantity(auctionItemId, parsed);
+  };
+
+  // Toggle Intent to Buy (Submit or Remove Intent) with Non-Empty Validation
   const handleToggleIntent = async (auctionItemId: number, memberId: number) => {
+    if (intentQuantityInput.trim() === '') {
+      showMsg('error', 'Intent quantity text box cannot be empty upon finalization.');
+      return;
+    }
+    const parsedQty = parseInt(intentQuantityInput, 10);
+    if (isNaN(parsedQty) || parsedQty <= 0) {
+      showMsg('error', 'Please enter a valid positive quantity number for intent.');
+      return;
+    }
+
     setLoading(true);
     try {
       const res = await fetch(`/api/v1/auction-items/${auctionItemId}/intents`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ member_id: memberId }),
+        body: JSON.stringify({ member_id: memberId, quantity: parsedQty }),
       });
 
       if (!res.ok) {
@@ -550,6 +743,33 @@ export const LootQueueConsole: React.FC = () => {
       showMsg('success', 'Intent to Buy updated successfully!');
     } catch (err: any) {
       showMsg('error', err.message || 'Failed to update intent');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Remove Intent to Buy Handler
+  const handleRemoveIntent = async (auctionItemId: number, memberId: number) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/v1/auction-items/${auctionItemId}/intents/${memberId}`, {
+        method: 'DELETE',
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to remove intent');
+      }
+
+      const activeRes = await fetch('/api/v1/auctions/active');
+      if (activeRes.ok) {
+        const updatedAuction = await activeRes.json();
+        setActiveAuction(updatedAuction && updatedAuction.id ? updatedAuction : null);
+      }
+
+      showMsg('success', 'Intent removed successfully!');
+    } catch (err: any) {
+      showMsg('error', err.message || 'Failed to remove intent');
     } finally {
       setLoading(false);
     }
@@ -598,16 +818,49 @@ export const LootQueueConsole: React.FC = () => {
         showMsg('success', `Resolved item! Winner(s): ${winnerNames || 'None'}. Rankings updated!`);
       }
 
-      // Refresh active auction & queue tables
+      // Refresh active auction, allocation history & queue tables
+      const activeRes = await fetch('/api/v1/auctions/active');
+      if (activeRes.ok) {
+        const updatedAuction = await activeRes.json();
+        setActiveAuction(updatedAuction && updatedAuction.id ? updatedAuction : null);
+        if (updatedAuction && updatedAuction.id) {
+          await fetchActiveAuctionHistory(updatedAuction.id);
+        }
+      }
+
+      await fetchAllAuctions();
+      fetchQueueAndHistory(itemId);
+    } catch (err: any) {
+      showMsg('error', err.message || 'Failed to resolve item');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Manual Finalize Raid Auction Handler
+  const handleFinalizeAuction = async (auctionId: number) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/v1/auctions/${auctionId}/finalize`, {
+        method: 'POST',
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to finalize auction');
+      }
+
       const activeRes = await fetch('/api/v1/auctions/active');
       if (activeRes.ok) {
         const updatedAuction = await activeRes.json();
         setActiveAuction(updatedAuction && updatedAuction.id ? updatedAuction : null);
       }
 
-      fetchQueueAndHistory(itemId);
+      await fetchAllAuctions();
+
+      showMsg('success', 'Raid auction finalized and closed successfully!');
     } catch (err: any) {
-      showMsg('error', err.message || 'Failed to resolve item');
+      showMsg('error', err.message || 'Failed to finalize auction');
     } finally {
       setLoading(false);
     }
@@ -739,6 +992,7 @@ export const LootQueueConsole: React.FC = () => {
       (m.gvg_build && m.gvg_build.toLowerCase().includes(memberRosterSearchQuery.toLowerCase()))
   );
 
+  const selectedMemberObj = members.find((m) => m.id === selectedMemberId);
   const currentSelectedAuctionItem = activeAuction?.auction_items?.find((ai) => ai.id === selectedAuctionItemId);
 
   // Build Left-to-Right Chronological Matrix Columns for Page 3 (Items Page)
@@ -779,6 +1033,20 @@ export const LootQueueConsole: React.FC = () => {
   const rankRowNumbers = Array.from({ length: maxRankCount }, (_, i) => i + 1);
 
   const selectedItemObj = items.find((i) => i.id === selectedQueueItemId);
+
+  // Summary Pagination Item computation
+  const summaryAuctionItems = activeAuction?.auction_items || [];
+  const safeSummaryIndex = Math.max(0, Math.min(summaryItemIndex, summaryAuctionItems.length - 1));
+  const currentSummaryAuctionItem = summaryAuctionItems[safeSummaryIndex];
+
+  // History Auction Pagination & Object computation
+  const selectedHistoryAuctionObj = (allAuctions && selectedHistoryAuctionId)
+    ? allAuctions.find((a) => a.id === selectedHistoryAuctionId) || allAuctions[0]
+    : allAuctions[0];
+
+  const historyAuctionItems = selectedHistoryAuctionObj?.auction_items || [];
+  const safeHistoryItemIndex = Math.max(0, Math.min(historyAuctionItemIndex, Math.max(0, historyAuctionItems.length - 1)));
+  const currentHistoryAuctionItem = historyAuctionItems[safeHistoryItemIndex];
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-16">
@@ -897,7 +1165,22 @@ export const LootQueueConsole: React.FC = () => {
                 }`}
               >
                 <PlusCircle className="w-3.5 h-3.5" />
-                Create New Auction
+                2. Create New Auction
+              </button>
+
+              <button
+                onClick={() => {
+                  setAuctionSubView('history');
+                  fetchAllAuctions();
+                }}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-extrabold transition-all ${
+                  auctionSubView === 'history'
+                    ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                }`}
+              >
+                <History className="w-3.5 h-3.5 text-purple-400" />
+                3. Auction History
               </button>
             </div>
           </div>
@@ -906,52 +1189,154 @@ export const LootQueueConsole: React.FC = () => {
           {auctionSubView === 'active' && (
             <div className="space-y-6">
               {activeAuction ? (
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                  {/* Left Column: Active Auction Items & Quantities */}
-                  <div className="lg:col-span-7 space-y-4">
-                    <div className="bg-slate-900/80 rounded-2xl border border-slate-800 p-5 space-y-4 shadow-xl">
-                      <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-                        <div>
-                          <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                            Active Raid Auction
-                          </span>
-                          <h3 className="text-lg font-black text-slate-100 mt-1">{activeAuction.title}</h3>
-                          <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
-                            <Calendar className="w-3.5 h-3.5 text-purple-400" />
-                            Scheduled Date: {new Date(activeAuction.auction_date).toLocaleDateString()}
-                          </p>
+                <div className="space-y-6">
+                  {/* 5 SUB-PAGES NAVIGATION BAR FOR VIEWING ACTIVE AUCTION (1. Edit Items as very first tab) */}
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-900/80 p-3 rounded-2xl border border-slate-800 shadow-xl">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => setActiveAuctionSubPage('edit')}
+                        className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all ${
+                          activeAuctionSubPage === 'edit'
+                            ? 'bg-gradient-to-r from-amber-500 to-purple-600 text-slate-950 font-black shadow-md'
+                            : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
+                        }`}
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                        1. Edit Auction Items
+                      </button>
+
+                      <button
+                        onClick={() => setActiveAuctionSubPage('intent')}
+                        className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all ${
+                          activeAuctionSubPage === 'intent'
+                            ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md'
+                            : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
+                        }`}
+                      >
+                        <UserPlus className="w-3.5 h-3.5" />
+                        2. Intent to Buy
+                      </button>
+
+                      <button
+                        onClick={() => setActiveAuctionSubPage('allocation')}
+                        className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all ${
+                          activeAuctionSubPage === 'allocation'
+                            ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md'
+                            : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
+                        }`}
+                      >
+                        <Package className="w-3.5 h-3.5" />
+                        3. Item Allocation (Qty)
+                      </button>
+
+                      <button
+                        onClick={() => setActiveAuctionSubPage('resolution')}
+                        className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all ${
+                          activeAuctionSubPage === 'resolution'
+                            ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md'
+                            : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
+                        }`}
+                      >
+                        <Play className="w-3.5 h-3.5 text-emerald-400" />
+                        4. Auction Resolution
+                      </button>
+
+                      <button
+                        onClick={() => setActiveAuctionSubPage('summary')}
+                        className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all ${
+                          activeAuctionSubPage === 'summary'
+                            ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md'
+                            : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
+                        }`}
+                      >
+                        <Trophy className="w-3.5 h-3.5 text-amber-400" />
+                        5. Auction Summary
+                      </button>
+
+                      <button
+                        onClick={() => setActiveAuctionSubPage('finalize')}
+                        className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all ${
+                          activeAuctionSubPage === 'finalize'
+                            ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-slate-950 font-black shadow-md'
+                            : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
+                        }`}
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                        6. Finalize Auction
+                      </button>
+                    </div>
+
+                    <div className="text-xs text-slate-400 font-bold px-2 flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5 text-purple-400" />
+                      Raid Date: {new Date(activeAuction.auction_date).toLocaleDateString()}
+                    </div>
+                  </div>
+
+                  {/* ACTIVE AUCTION SUB-PAGE 1: EDIT AUCTION ITEMS (VERY FIRST SUB-PAGE) */}
+                  {activeAuctionSubPage === 'edit' && (
+                    <div className="bg-slate-900/80 rounded-2xl border border-amber-500/30 p-6 space-y-6 shadow-xl max-w-3xl mx-auto">
+                      <div className="pb-3 border-b border-slate-800">
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                          Step 1: Edit Items in Running Active Auction
+                        </span>
+                        <h3 className="text-lg font-black text-slate-100 mt-1">
+                          Manage Active Raid Drops ({activeAuction.title})
+                        </h3>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          Add new items from the catalog into this running auction or remove pending items.
+                        </p>
+                      </div>
+
+                      {/* Add New Catalog Item to Running Auction */}
+                      <div className="p-4 bg-slate-950/80 rounded-xl border border-slate-800 space-y-3">
+                        <h4 className="text-xs font-extrabold uppercase tracking-wider text-purple-300 flex items-center gap-1.5">
+                          <PlusCircle className="w-4 h-4 text-purple-400" />
+                          Add Catalog Item to Running Active Auction:
+                        </h4>
+
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                          <select
+                            value={editAuctionAddItemId || ''}
+                            onChange={(e) => setEditAuctionAddItemId(Number(e.target.value))}
+                            className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-purple-500"
+                          >
+                            {items.map((item) => (
+                              <option key={item.id} value={item.id}>
+                                {item.name}
+                              </option>
+                            ))}
+                          </select>
+
+                          <button
+                            type="button"
+                            onClick={handleAddActiveAuctionItem}
+                            disabled={loading || !editAuctionAddItemId}
+                            className="px-5 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-md shadow-purple-600/20 disabled:opacity-50 shrink-0"
+                          >
+                            <Plus className="w-4 h-4" />
+                            Add Item to Active Auction
+                          </button>
                         </div>
                       </div>
 
-                      {/* Item Cards List */}
+                      {/* Current Items Directory in Active Auction */}
                       <div className="space-y-3">
                         <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
-                          Items in this Auction ({activeAuction.auction_items?.length || 0}):
+                          Current Items in Active Auction ({activeAuction.auction_items?.length || 0}):
                         </h4>
 
-                        {activeAuction.auction_items?.map((ai) => {
-                          const isSelected = selectedAuctionItemId === ai.id;
-                          const isResolved = ai.status === 'RESOLVED';
-                          const intentsCount = ai.intents?.length || 0;
-
-                          return (
-                            <div
-                              key={ai.id}
-                              className={`p-4 rounded-xl border transition-all ${
-                                isSelected
-                                  ? 'bg-purple-950/30 border-purple-500/50 shadow-lg shadow-purple-500/10'
-                                  : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
-                              }`}
-                            >
-                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="space-y-3">
+                          {activeAuction.auction_items?.map((ai) => {
+                            const isResolved = ai.status === 'RESOLVED';
+                            return (
+                              <div
+                                key={ai.id}
+                                className="p-4 bg-slate-950/80 rounded-xl border border-slate-800 flex items-center justify-between gap-4"
+                              >
                                 <div className="flex items-center gap-3">
-                                  <button
-                                    onClick={() => setSelectedAuctionItemId(ai.id)}
-                                    className="p-2 bg-slate-900 rounded-lg border border-slate-700 text-amber-400 hover:border-purple-500 transition-colors"
-                                  >
-                                    <Shield className="w-5 h-5" />
-                                  </button>
-
+                                  <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-700 text-amber-400">
+                                    <Package className="w-5 h-5" />
+                                  </div>
                                   <div>
                                     <div className="flex items-center gap-2">
                                       <h5 className="font-bold text-slate-100 text-sm">{ai.item?.name}</h5>
@@ -965,90 +1350,48 @@ export const LootQueueConsole: React.FC = () => {
                                         {ai.status}
                                       </span>
                                     </div>
-                                    <p className="text-xs text-slate-400 line-clamp-1">{ai.item?.description}</p>
+                                    <p className="text-xs text-slate-400 mt-0.5">{ai.item?.description}</p>
                                   </div>
                                 </div>
 
-                                {/* Post-Raid Drop Quantity Stepper */}
-                                <div className="flex items-center gap-4 self-end sm:self-auto">
-                                  <div className="flex items-center gap-1.5 bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-800">
-                                    <span className="text-[10px] font-extrabold uppercase text-slate-400">Qty:</span>
-                                    {!isResolved ? (
-                                      <div className="flex items-center gap-1">
-                                        <button
-                                          onClick={() => handleUpdateItemQuantity(ai.id, ai.quantity - 1)}
-                                          disabled={loading || ai.quantity <= 0}
-                                          className="w-5 h-5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold disabled:opacity-30"
-                                        >
-                                          -
-                                        </button>
-                                        <span className="font-extrabold text-amber-400 text-sm px-1.5">
-                                          {ai.quantity}
-                                        </span>
-                                        <button
-                                          onClick={() => handleUpdateItemQuantity(ai.id, ai.quantity + 1)}
-                                          disabled={loading}
-                                          className="w-5 h-5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold"
-                                        >
-                                          +
-                                        </button>
-                                      </div>
-                                    ) : (
-                                      <span className="font-bold text-slate-200 text-xs px-1">{ai.quantity}</span>
-                                    )}
-                                  </div>
-
-                                  <div className="text-right">
-                                    <span className="text-[11px] font-bold text-purple-300 block">
-                                      {intentsCount} Intent{intentsCount !== 1 ? 's' : ''}
-                                    </span>
-                                  </div>
+                                <div>
+                                  {!isResolved ? (
+                                    <button
+                                      onClick={() => handleDeleteActiveAuctionItem(ai.id)}
+                                      disabled={loading}
+                                      className="p-2 bg-rose-950/60 hover:bg-rose-900 text-rose-300 border border-rose-500/40 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                      Remove Item
+                                    </button>
+                                  ) : (
+                                    <span className="text-xs font-bold text-emerald-400">Resolved</span>
+                                  )}
                                 </div>
                               </div>
-
-                              {/* Candidate Intents Registered List */}
-                              {ai.intents && ai.intents.length > 0 && (
-                                <div className="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center gap-2 flex-wrap">
-                                  <span className="text-[10px] font-extrabold uppercase text-slate-400">
-                                    Registered Candidates:
-                                  </span>
-                                  {ai.intents.map((intent) => (
-                                    <React.Fragment key={intent.id}>
-                                      {renderMemberBadge(intent.member?.name || `Member #${intent.member_id}`, intent.member?.class)}
-                                    </React.Fragment>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
+                            );
+                          })}
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  )}
 
-                  {/* Right Column: Submit Intent & Resolve Item Options */}
-                  <div className="lg:col-span-5 space-y-6">
-                    {/* Submit Intent Box */}
-                    <div className="bg-slate-900/80 rounded-2xl border border-slate-800 p-5 space-y-4 shadow-xl">
-                      <h3 className="text-sm font-extrabold uppercase tracking-wider text-slate-200 flex items-center gap-2">
-                        <UserPlus className="w-4 h-4 text-purple-400" />
-                        Submit Member Intent to Buy
-                      </h3>
+                  {/* ACTIVE AUCTION SUB-PAGE 2: INTENT TO BUY (MEMBER-CENTRIC WORKFLOW: MEMBER -> ITEM -> QUANTITY) */}
+                  {activeAuctionSubPage === 'intent' && (
+                    <div className="space-y-6">
+                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                        {/* Left Column: Primary Member Selection */}
+                        <div className="lg:col-span-6 space-y-4">
+                          <div className="bg-slate-900/80 rounded-2xl border border-purple-500/40 p-5 space-y-4 shadow-xl">
+                            <div className="pb-3 border-b border-slate-800">
+                              <span className="text-[10px] font-bold uppercase tracking-widest text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/20">
+                                Step 2: Member-Centric Intent
+                              </span>
+                              <h3 className="text-base font-black text-slate-100 mt-1">1. Select Guild Member</h3>
+                              <p className="text-xs text-slate-400 mt-0.5">Search and select a member to manage their intents.</p>
+                            </div>
 
-                      {currentSelectedAuctionItem ? (
-                        <div className="space-y-3">
-                          <div className="p-3 bg-purple-950/20 rounded-xl border border-purple-500/30">
-                            <span className="text-[10px] font-extrabold text-purple-400 uppercase tracking-wider block">
-                              Target Auction Item:
-                            </span>
-                            <span className="text-sm font-bold text-slate-100">
-                              {currentSelectedAuctionItem.item?.name} (Qty: {currentSelectedAuctionItem.quantity})
-                            </span>
-                          </div>
-
-                          {/* Member Search & Dropdown Select */}
-                          <div className="space-y-2">
-                            <label className="text-xs font-semibold text-slate-300 block">Select Guild Member:</label>
+                            {/* Member Search Input */}
                             <div className="relative">
                               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
                               <input
@@ -1056,87 +1399,603 @@ export const LootQueueConsole: React.FC = () => {
                                 placeholder="Search member name, class, or discord..."
                                 value={memberSearchQuery}
                                 onChange={(e) => setMemberSearchQuery(e.target.value)}
-                                className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                                className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-8 pr-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-purple-500"
                               />
                             </div>
 
-                            <select
-                              value={selectedMemberId || ''}
-                              onChange={(e) => setSelectedMemberId(Number(e.target.value))}
-                              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-purple-500"
-                            >
-                              {filteredMembers.map((m) => (
-                                <option key={m.id} value={m.id}>
-                                  {m.name} ({m.discord_id})
-                                </option>
-                              ))}
-                            </select>
+                            {/* Member Select Options Grid / List */}
+                            <div className="max-h-64 overflow-y-auto space-y-1.5 pr-1">
+                              {filteredMembers.map((m) => {
+                                const isSelected = selectedMemberId === m.id;
+                                return (
+                                  <button
+                                    key={m.id}
+                                    onClick={() => setSelectedMemberId(m.id)}
+                                    className={`w-full p-3 rounded-xl border text-left flex items-center justify-between transition-all ${
+                                      isSelected
+                                        ? 'bg-purple-950/40 border-purple-500 text-white shadow-md'
+                                        : 'bg-slate-950/60 border-slate-800/80 hover:border-slate-700 text-slate-300'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-2.5">
+                                      {renderMemberBadge(m.name, m.class)}
+                                      <span className="text-xs text-slate-400 font-mono">({m.discord_id})</span>
+                                    </div>
+                                    {isSelected && <CheckCircle2 className="w-4 h-4 text-purple-400 shrink-0" />}
+                                  </button>
+                                );
+                              })}
+                            </div>
                           </div>
-
-                          {/* Submit / Remove Intent Toggle Button */}
-                          {selectedMemberId && (
-                            <button
-                              onClick={() => handleToggleIntent(currentSelectedAuctionItem.id, selectedMemberId)}
-                              disabled={loading || currentSelectedAuctionItem.status === 'RESOLVED'}
-                              className={`w-full py-2.5 rounded-xl text-xs font-extrabold flex items-center justify-center gap-2 transition-all ${
-                                currentSelectedAuctionItem.intents?.some((i) => i.member_id === selectedMemberId)
-                                  ? 'bg-rose-950/80 hover:bg-rose-900 border border-rose-500/50 text-rose-200'
-                                  : 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-lg shadow-purple-600/20'
-                              } disabled:opacity-50`}
-                            >
-                              {currentSelectedAuctionItem.intents?.some((i) => i.member_id === selectedMemberId) ? (
-                                <>
-                                  <X className="w-4 h-4" />
-                                  Remove Intent to Buy
-                                </>
-                              ) : (
-                                <>
-                                  <UserCheck className="w-4 h-4" />
-                                  Register Intent to Buy
-                                </>
-                              )}
-                            </button>
-                          )}
                         </div>
-                      ) : (
-                        <p className="text-xs text-slate-500 italic py-4 text-center">
-                          Select an item on the left to submit member intent.
-                        </p>
-                      )}
-                    </div>
 
-                    {/* Resolve Auction Box */}
-                    {currentSelectedAuctionItem && (
-                      <div className="bg-slate-900/80 rounded-2xl border border-slate-800 p-5 space-y-4 shadow-xl">
-                        <h3 className="text-sm font-extrabold uppercase tracking-wider text-slate-200 flex items-center gap-2">
-                          <Trophy className="w-4 h-4 text-amber-400" />
-                          Resolve Item Auction
-                        </h3>
+                        {/* Right Column: Member's Target Item & Quantity Intent Submission */}
+                        <div className="lg:col-span-6 space-y-6">
+                          <div className="bg-slate-900/80 rounded-2xl border border-slate-800 p-5 space-y-4 shadow-xl">
+                            <h3 className="text-sm font-extrabold uppercase tracking-wider text-slate-200 flex items-center gap-2">
+                              <UserCheck className="w-4 h-4 text-amber-400" />
+                              2. Select Item & Quantity Intent
+                            </h3>
 
-                        {currentSelectedAuctionItem.status === 'PENDING' ? (
-                          <div className="space-y-3">
-                            <p className="text-xs text-slate-400">
-                              Resolving this item will automatically run the 3-Tier Allocation Engine for candidates with registered intents, allocate winners, rotate winners to <code className="text-purple-300">PAST_WINNER</code>, and record rank snapshots.
-                            </p>
-                            <button
-                              onClick={() =>
-                                handleResolveItem(currentSelectedAuctionItem.id, currentSelectedAuctionItem.item_id)
-                              }
-                              disabled={loading}
-                              className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20"
-                            >
-                              <Play className="w-4 h-4" />
-                              Execute 3-Tier Allocation & Resolve
-                            </button>
+                            {selectedMemberObj ? (
+                              <div className="space-y-4">
+                                {/* Selected Member Header Card */}
+                                <div className="p-3 bg-purple-950/30 rounded-xl border border-purple-500/40 flex items-center justify-between">
+                                  <span className="text-xs font-bold text-slate-300">Selected Member:</span>
+                                  {renderMemberBadge(selectedMemberObj.name, selectedMemberObj.class)}
+                                </div>
+
+                                {/* Select Item Dropdown */}
+                                <div className="space-y-1.5">
+                                  <label className="text-xs font-bold text-slate-300 block">Select Auction Item:</label>
+                                  <select
+                                    value={selectedAuctionItemId || ''}
+                                    onChange={(e) => setSelectedAuctionItemId(Number(e.target.value))}
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-purple-500"
+                                  >
+                                    {activeAuction.auction_items?.map((ai) => (
+                                      <option key={ai.id} value={ai.id}>
+                                        {ai.item?.name} (Status: {ai.status})
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                {/* Select Quantity (Allows Empty State) */}
+                                <div className="space-y-1.5">
+                                  <label className="text-xs font-bold text-slate-300 block">Quantity Requested:</label>
+                                  <div className="flex items-center gap-2">
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      placeholder="Qty"
+                                      value={intentQuantityInput}
+                                      onChange={(e) => setIntentQuantityInput(e.target.value)}
+                                      className="w-24 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm font-black text-amber-400 focus:outline-none focus:border-purple-500 text-center shadow-inner"
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* Submit / Update / Remove Intent Actions */}
+                                {currentSelectedAuctionItem && (
+                                  <div className="flex flex-col sm:flex-row gap-2">
+                                    <button
+                                      onClick={() => handleToggleIntent(currentSelectedAuctionItem.id, selectedMemberObj.id)}
+                                      disabled={loading || currentSelectedAuctionItem.status === 'RESOLVED'}
+                                      className="flex-1 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-extrabold flex items-center justify-center gap-2 shadow-lg shadow-purple-600/20 disabled:opacity-50"
+                                    >
+                                      <UserCheck className="w-4 h-4" />
+                                      {currentSelectedAuctionItem.intents?.some((i) => i.member_id === selectedMemberObj.id)
+                                        ? `Update Quantity (${intentQuantityInput || '0'})`
+                                        : `Register Intent to Buy (${intentQuantityInput || '0'})`}
+                                    </button>
+
+                                    {currentSelectedAuctionItem.intents?.some((i) => i.member_id === selectedMemberObj.id) && (
+                                      <button
+                                        onClick={() => handleRemoveIntent(currentSelectedAuctionItem.id, selectedMemberObj.id)}
+                                        disabled={loading || currentSelectedAuctionItem.status === 'RESOLVED'}
+                                        className="px-4 py-3 bg-rose-950/80 hover:bg-rose-900 border border-rose-500/50 text-rose-200 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all disabled:opacity-50 shrink-0"
+                                      >
+                                        <X className="w-4 h-4" />
+                                        Remove Intent
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+
+                                {/* Registered Intents Overview for Selected Member */}
+                                <div className="pt-3 border-t border-slate-800 space-y-2">
+                                  <span className="text-xs font-extrabold text-slate-400 uppercase tracking-wider block">
+                                    Registered Intents for {selectedMemberObj.name}:
+                                  </span>
+                                  <div className="space-y-1.5">
+                                    {activeAuction.auction_items?.filter((ai) =>
+                                      ai.intents?.some((intent) => intent.member_id === selectedMemberObj.id)
+                                    ).length ? (
+                                      activeAuction.auction_items
+                                        ?.filter((ai) => ai.intents?.some((intent) => intent.member_id === selectedMemberObj.id))
+                                        .map((ai) => {
+                                          const memIntent = ai.intents?.find((i) => i.member_id === selectedMemberObj.id);
+                                          const qtyNum = memIntent?.quantity !== undefined && memIntent.quantity > 0 ? memIntent.quantity : 1;
+                                          return (
+                                            <div
+                                              key={ai.id}
+                                              className="p-2.5 bg-slate-950/60 rounded-lg border border-slate-800 flex items-center justify-between text-xs"
+                                            >
+                                              <span className="font-bold text-slate-200">{ai.item?.name}</span>
+                                              <span className="text-xs font-black text-emerald-300 bg-emerald-500/25 px-2.5 py-0.5 rounded-lg border border-emerald-500/50 shadow-sm flex items-center gap-1">
+                                                <span className="text-[10px] font-extrabold uppercase text-emerald-400/80">Qty:</span>
+                                                {qtyNum}
+                                              </span>
+                                            </div>
+                                          );
+                                        })
+                                    ) : (
+                                      <p className="text-xs text-slate-500 italic">No active intents registered yet for this member.</p>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <p className="text-xs text-slate-500 italic py-6 text-center">
+                                Select a guild member on the left to start setting item & quantity intents.
+                              </p>
+                            )}
                           </div>
-                        ) : (
-                          <div className="p-3 bg-emerald-950/40 rounded-xl border border-emerald-500/30 text-emerald-200 text-xs font-semibold">
-                            ✓ This item auction has been RESOLVED.
+                        </div>
+                      </div>
+
+                      {/* Summary of All Intents to Buy Per Item (Full Width Below) */}
+                      <div className="bg-slate-900/80 rounded-2xl border border-slate-800 p-6 space-y-4 shadow-xl">
+                        <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                          <div className="flex items-center gap-2">
+                            <ListChecks className="w-5 h-5 text-purple-400" />
+                            <h3 className="text-sm font-extrabold uppercase tracking-wider text-slate-100">
+                              Summary of All Intents to Buy Per Item ({activeAuction.auction_items?.length || 0} Items)
+                            </h3>
+                          </div>
+                          <span className="text-xs text-slate-400">
+                            Live candidate rosters and quantities per item drop
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                          {activeAuction.auction_items?.map((ai) => {
+                            const candidates = ai.intents || [];
+                            const totalUnitsRequested = candidates.reduce(
+                              (sum, i) => sum + (i.quantity !== undefined && i.quantity > 0 ? i.quantity : 1),
+                              0
+                            );
+
+                            return (
+                              <div
+                                key={ai.id}
+                                className="p-4 bg-slate-950/80 rounded-xl border border-slate-800 space-y-3 flex flex-col justify-between"
+                              >
+                                <div className="space-y-2">
+                                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                                    <h4 className="font-bold text-slate-100 text-sm flex items-center gap-1.5">
+                                      <Shield className="w-4 h-4 text-amber-400 shrink-0" />
+                                      {ai.item?.name}
+                                    </h4>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-xs font-black px-2.5 py-0.5 rounded-lg bg-amber-500/25 text-amber-300 border border-amber-500/50 shadow-sm shrink-0 flex items-center gap-1">
+                                        <span className="text-[10px] font-extrabold uppercase text-amber-400/80">Total:</span>
+                                        {totalUnitsRequested}
+                                      </span>
+                                      <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-lg bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">
+                                        {candidates.length} Candidate{candidates.length !== 1 ? 's' : ''}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <p className="text-xs text-slate-400 line-clamp-1">{ai.item?.description}</p>
+                                </div>
+
+                                <div className="pt-2 border-t border-slate-800/80 space-y-2">
+                                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block">
+                                    Candidate Members & Requested Quantities:
+                                  </span>
+
+                                  {candidates.length > 0 ? (
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {candidates.map((intent) => {
+                                        const qtyVal = intent.quantity !== undefined && intent.quantity > 0 ? intent.quantity : 1;
+                                        return (
+                                          <React.Fragment key={intent.id}>
+                                            {renderMemberBadge(
+                                              intent.member?.name || `Member #${intent.member_id}`,
+                                              intent.member?.class,
+                                              <span className="text-xs font-black text-amber-300 bg-amber-500/30 px-2 py-0.5 rounded-lg border border-amber-500/60 shadow-md ml-1 inline-flex items-center">
+                                                {qtyVal}
+                                              </span>
+                                            )}
+                                          </React.Fragment>
+                                        );
+                                      })}
+                                    </div>
+                                  ) : (
+                                    <span className="text-xs text-slate-500 italic block py-1">
+                                      No candidates registered for this item yet.
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ACTIVE AUCTION SUB-PAGE 3: ITEM ALLOCATION (QTY) WITH FINALIZE QTY BUTTON */}
+                  {activeAuctionSubPage === 'allocation' && (
+                    <div className="bg-slate-900/80 rounded-2xl border border-slate-800 p-6 space-y-6 shadow-xl max-w-3xl mx-auto">
+                      <div className="pb-3 border-b border-slate-800">
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                          Step 3: Item Allocation / Drop Quantity
+                        </span>
+                        <h3 className="text-base font-black text-slate-100 mt-1">
+                          Manage Actual Raid Drop Quantities
+                        </h3>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          Enter drop quantities (box can be cleared/empty while typing) and click <strong className="text-amber-300">Save</strong> to update.
+                        </p>
+                      </div>
+
+                      <div className="space-y-4">
+                        {activeAuction.auction_items?.map((ai) => {
+                          const isResolved = ai.status === 'RESOLVED';
+                          const typedVal = allocationQtyInputs[ai.id] !== undefined ? allocationQtyInputs[ai.id] : String(ai.quantity);
+
+                          return (
+                            <div
+                              key={ai.id}
+                              className="p-4 bg-slate-950/80 rounded-xl border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-700 text-amber-400">
+                                  <Package className="w-5 h-5" />
+                                </div>
+                                <div>
+                                  <h4 className="font-bold text-slate-100 text-sm">{ai.item?.name}</h4>
+                                  <p className="text-xs text-slate-400">{ai.item?.description}</p>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-3 self-end sm:self-auto">
+                                <span className="text-xs font-bold text-slate-400">Drop Quantity:</span>
+                                {!isResolved ? (
+                                  <div className="flex items-center gap-2">
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      placeholder="Qty"
+                                      value={typedVal}
+                                      onChange={(e) => setAllocationQtyInputs({ ...allocationQtyInputs, [ai.id]: e.target.value })}
+                                      className="w-20 bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs font-black text-amber-400 focus:outline-none focus:border-purple-500 text-center"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => handleFinalizeAllocationQuantity(ai.id, ai.item?.name || 'item', ai.quantity)}
+                                      disabled={loading}
+                                      className="px-3.5 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-xl text-xs font-black flex items-center gap-1.5 shadow-md shadow-amber-500/20 disabled:opacity-50"
+                                    >
+                                      <CheckCircle2 className="w-3.5 h-3.5" />
+                                      Save
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <span className="font-bold text-emerald-400 text-sm px-3 py-1 bg-emerald-950/40 rounded-lg border border-emerald-500/30">
+                                    {ai.quantity} (Resolved)
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ACTIVE AUCTION SUB-PAGE 4: ITEM AUCTION RESOLUTION */}
+                  {activeAuctionSubPage === 'resolution' && (
+                    <div className="bg-slate-900/80 rounded-2xl border border-slate-800 p-6 space-y-6 shadow-xl max-w-3xl mx-auto">
+                      <div className="pb-3 border-b border-slate-800">
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                          Step 4: Item Auction Resolution
+                        </span>
+                        <h3 className="text-base font-black text-slate-100 mt-1">
+                          Execute 3-Tier Priority Roll & Allocation
+                        </h3>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          Run the allocation algorithm to determine loot winners, update rankings, and rotate candidates to past winner status.
+                        </p>
+                      </div>
+
+                      <div className="space-y-4">
+                        {activeAuction.auction_items?.map((ai) => {
+                          const isResolved = ai.status === 'RESOLVED';
+                          const intentsCount = ai.intents?.length || 0;
+
+                          return (
+                            <div
+                              key={ai.id}
+                              className="p-5 bg-slate-950/80 rounded-xl border border-slate-800 space-y-4"
+                            >
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <h4 className="font-bold text-slate-100 text-sm">{ai.item?.name}</h4>
+                                    <span
+                                      className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                                        isResolved
+                                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                          : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                      }`}
+                                    >
+                                      {ai.status}
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-slate-400 mt-0.5">
+                                    Quantity Dropped: <strong className="text-amber-400">{ai.quantity}</strong> | Candidate Intents: <strong className="text-purple-300">{intentsCount}</strong>
+                                  </p>
+                                </div>
+
+                                {!isResolved ? (
+                                  <button
+                                    onClick={() => handleResolveItem(ai.id, ai.item_id)}
+                                    disabled={loading}
+                                    className="px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20"
+                                  >
+                                    <Play className="w-4 h-4" />
+                                    Execute Resolution
+                                  </button>
+                                ) : (
+                                  <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
+                                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                                    Resolved
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ACTIVE AUCTION SUB-PAGE 5: AUCTION SUMMARY (1 ITEM = 1 PAGE PAGINATION) */}
+                  {activeAuctionSubPage === 'summary' && (
+                    <div className="bg-slate-900/80 rounded-2xl border border-amber-500/30 p-6 space-y-6 shadow-2xl max-w-4xl mx-auto">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-slate-800">
+                        <div>
+                          <span className="text-[10px] font-bold uppercase tracking-widest text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                            Step 5: Auction Summary (1 Item = 1 Page)
+                          </span>
+                          <h3 className="text-lg font-black text-slate-100 mt-1">
+                            Loot Winner Summary Breakdown
+                          </h3>
+                        </div>
+
+                        {/* Summary Pagination Navigation Controls */}
+                        {summaryAuctionItems.length > 0 && (
+                          <div className="flex items-center gap-1 bg-slate-950 p-1.5 rounded-xl border border-slate-800 self-start sm:self-auto">
+                            <button
+                              onClick={() => setSummaryItemIndex((prev) => Math.max(0, prev - 1))}
+                              disabled={safeSummaryIndex === 0}
+                              className="p-1 bg-slate-900 hover:bg-slate-800 text-slate-200 rounded-lg disabled:opacity-30 transition-all"
+                            >
+                              <ChevronLeft className="w-4 h-4" />
+                            </button>
+                            <span className="text-xs font-extrabold text-purple-300 px-2 font-mono">
+                              Item {safeSummaryIndex + 1} of {summaryAuctionItems.length}
+                            </span>
+                            <button
+                              onClick={() => setSummaryItemIndex((prev) => Math.min(summaryAuctionItems.length - 1, prev + 1))}
+                              disabled={safeSummaryIndex === summaryAuctionItems.length - 1}
+                              className="p-1 bg-slate-900 hover:bg-slate-800 text-slate-200 rounded-lg disabled:opacity-30 transition-all"
+                            >
+                              <ChevronRight className="w-4 h-4" />
+                            </button>
                           </div>
                         )}
                       </div>
-                    )}
-                  </div>
+
+                      {/* Quick Item Tab Pills for Direct Jump by Name */}
+                      <div className="flex flex-wrap gap-2">
+                        {summaryAuctionItems.map((ai, index) => (
+                          <button
+                            key={ai.id}
+                            onClick={() => setSummaryItemIndex(index)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                              safeSummaryIndex === index
+                                ? 'bg-amber-500 text-slate-950 shadow-md font-black'
+                                : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
+                            }`}
+                          >
+                            {ai.item?.name}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Single Item Full Page Card */}
+                      {currentSummaryAuctionItem ? (
+                        <div className="bg-slate-950/80 rounded-2xl border border-slate-800 p-6 space-y-6 shadow-xl">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800/80">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <Trophy className="w-5 h-5 text-amber-400" />
+                                <h3 className="text-xl font-black text-amber-300">{currentSummaryAuctionItem.item?.name}</h3>
+                                <span
+                                  className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                                    currentSummaryAuctionItem.status === 'RESOLVED'
+                                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                      : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                  }`}
+                                >
+                                  {currentSummaryAuctionItem.status}
+                                </span>
+                              </div>
+                              <p className="text-xs text-slate-400">{currentSummaryAuctionItem.item?.description}</p>
+                            </div>
+
+                            <div className="flex items-center gap-3 text-xs">
+                              <div className="px-3 py-1.5 bg-slate-900 rounded-xl border border-slate-800 text-center">
+                                <span className="text-[10px] font-extrabold uppercase text-slate-500 block">Total Dropped</span>
+                                <span className="font-black text-amber-400 text-sm">{currentSummaryAuctionItem.quantity}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Winner Allocations List */}
+                          <div className="space-y-3">
+                            <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                              <Award className="w-4 h-4 text-emerald-400" />
+                              Allocated Winner(s) for this Item:
+                            </h4>
+
+                            {(() => {
+                              const itemAllocations = activeAuctionAllocationRecords.filter(
+                                (h) => h.item_id === currentSummaryAuctionItem.item_id
+                              );
+
+                              if (itemAllocations.length > 0) {
+                                return (
+                                  <div className="bg-slate-900/80 rounded-xl border border-slate-800 overflow-hidden">
+                                    <table className="w-full text-left border-collapse text-xs">
+                                      <thead>
+                                        <tr className="bg-slate-950 border-b border-slate-800 text-slate-400 font-semibold uppercase">
+                                          <th className="py-3 px-4">Winner Name</th>
+                                          <th className="py-3 px-4">Discord ID</th>
+                                          <th className="py-3 px-4">Qty Won</th>
+                                          <th className="py-3 px-4 text-right">Allocated At</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                                        {itemAllocations.map((alloc) => (
+                                          <tr key={alloc.id} className="hover:bg-slate-800/40 transition-colors">
+                                            <td className="py-3 px-4">
+                                              {renderMemberBadge(alloc.member_name, alloc.member_class, <Trophy className="w-3.5 h-3.5 text-amber-400 shrink-0" />)}
+                                            </td>
+                                            <td className="py-3 px-4 font-mono text-slate-400">{alloc.discord_id}</td>
+                                            <td className="py-3 px-4 font-extrabold text-amber-400">{alloc.allocated_quantity}</td>
+                                            <td className="py-3 px-4 font-mono text-slate-400 text-right">
+                                              {new Date(alloc.allocated_at).toLocaleTimeString()}
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                );
+                              }
+
+                              if (currentSummaryAuctionItem.status === 'RESOLVED' && currentSummaryAuctionItem.quantity === 0) {
+                                return (
+                                  <div className="p-4 bg-slate-900/60 rounded-xl border border-slate-800 text-slate-400 text-xs italic text-center">
+                                    Item was resolved with 0 quantity drop (No winners allocated).
+                                  </div>
+                                );
+                              }
+
+                              return (
+                                <div className="p-4 bg-slate-900/60 rounded-xl border border-slate-800 text-slate-400 text-xs italic text-center">
+                                  Pending resolution. Execute resolution on Step 4 tab to generate allocation winners.
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-500 italic p-6 text-center">
+                          No items present in active auction.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ACTIVE AUCTION SUB-PAGE 6: FINALIZE AUCTION */}
+                  {activeAuctionSubPage === 'finalize' && (
+                    <div className="bg-slate-900/80 rounded-2xl border border-emerald-500/30 p-6 space-y-6 shadow-2xl max-w-3xl mx-auto">
+                      <div className="pb-3 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div>
+                          <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                            Step 6: Finalize & Close Raid Auction
+                          </span>
+                          <h3 className="text-lg font-black text-slate-100 mt-1 flex items-center gap-2">
+                            <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                            Finalize Raid Auction ({activeAuction.title})
+                          </h3>
+                          <p className="text-xs text-slate-400 mt-0.5">
+                            Resolving each item drop allocates the item, but the overall auction remains ACTIVE until you manually finalize it here.
+                          </p>
+                        </div>
+
+                        <span
+                          className={`text-xs font-black px-3 py-1 rounded-full border ${
+                            activeAuction.status === 'RESOLVED'
+                              ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                              : 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+                          }`}
+                        >
+                          Status: {activeAuction.status}
+                        </span>
+                      </div>
+
+                      {/* Readiness Breakdown Grid */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <div className="p-4 bg-slate-950/80 rounded-xl border border-slate-800 space-y-1">
+                          <span className="text-[10px] font-extrabold uppercase text-slate-400 block">Total Items Drop</span>
+                          <span className="text-lg font-black text-amber-400">
+                            {activeAuction.auction_items?.length || 0} Items
+                          </span>
+                        </div>
+
+                        <div className="p-4 bg-slate-950/80 rounded-xl border border-slate-800 space-y-1">
+                          <span className="text-[10px] font-extrabold uppercase text-slate-400 block">Resolved Items</span>
+                          <span className="text-lg font-black text-emerald-400">
+                            {activeAuction.auction_items?.filter((ai) => ai.status === 'RESOLVED').length || 0} / {activeAuction.auction_items?.length || 0}
+                          </span>
+                        </div>
+
+                        <div className="p-4 bg-slate-950/80 rounded-xl border border-slate-800 space-y-1">
+                          <span className="text-[10px] font-extrabold uppercase text-slate-400 block">Pending Items</span>
+                          <span className="text-lg font-black text-purple-300">
+                            {activeAuction.auction_items?.filter((ai) => ai.status === 'PENDING').length || 0} Pending
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Notice & Directives */}
+                      <div className="p-4 bg-slate-950/90 rounded-xl border border-slate-800 space-y-2">
+                        <h4 className="text-xs font-black uppercase text-amber-400 flex items-center gap-1.5">
+                          <Zap className="w-4 h-4 text-amber-400" />
+                          Manual Finalization Directive:
+                        </h4>
+                        <p className="text-xs text-slate-300 leading-relaxed">
+                          Clicking <strong className="text-emerald-400">"Finalize Raid Auction Now"</strong> below will officially set this raid auction to <span className="text-emerald-400 font-bold">RESOLVED</span> and archive all loot allocations. Resolving individual item auctions does not close the entire raid auction automatically.
+                        </p>
+                      </div>
+
+                      {/* Finalize Action Button */}
+                      {activeAuction.status !== 'RESOLVED' ? (
+                        <button
+                          onClick={() => handleFinalizeAuction(activeAuction.id)}
+                          disabled={loading}
+                          className="w-full py-4 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black rounded-xl text-sm uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 disabled:opacity-50 transition-all"
+                        >
+                          <CheckCircle2 className="w-5 h-5" />
+                          Finalize Raid Auction Now
+                        </button>
+                      ) : (
+                        <div className="p-4 bg-emerald-500/10 rounded-xl border border-emerald-500/30 text-center space-y-1">
+                          <CheckCircle2 className="w-6 h-6 text-emerald-400 mx-auto" />
+                          <h4 className="text-sm font-black text-emerald-300">This Raid Auction is Officially Finalized!</h4>
+                          <p className="text-xs text-slate-400">All item allocations are archived and logged in Auction History.</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               ) : (
                 /* No Active Auction State - Prompt User to Create One */
@@ -1214,8 +2073,8 @@ export const LootQueueConsole: React.FC = () => {
                     Select Raid Item from Catalog:
                   </h4>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-                    <div className="sm:col-span-7 space-y-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+                    <div className="sm:col-span-8 space-y-2">
                       <input
                         type="text"
                         placeholder="Search catalog items..."
@@ -1237,20 +2096,7 @@ export const LootQueueConsole: React.FC = () => {
                       </select>
                     </div>
 
-                    <div className="sm:col-span-5 flex flex-col justify-between gap-2">
-                      <div>
-                        <label className="text-[11px] font-semibold text-slate-400 block mb-1">
-                          Initial Drop Quantity:
-                        </label>
-                        <input
-                          type="number"
-                          min="0"
-                          value={initialQuantityInput}
-                          onChange={(e) => setInitialQuantityInput(Number(e.target.value))}
-                          className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs font-bold text-amber-400 focus:outline-none focus:border-purple-500"
-                        />
-                      </div>
-
+                    <div className="sm:col-span-4">
                       <button
                         type="button"
                         onClick={handleAddDraftItem}
@@ -1258,7 +2104,7 @@ export const LootQueueConsole: React.FC = () => {
                         className="w-full py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all disabled:opacity-50"
                       >
                         <Plus className="w-4 h-4" />
-                        Add to Draft List
+                        Add Item to Draft List
                       </button>
                     </div>
                   </div>
@@ -1285,25 +2131,14 @@ export const LootQueueConsole: React.FC = () => {
                             <tr key={di.item_id}>
                               <td className="py-3 px-4 font-semibold text-slate-100">{di.item_name}</td>
                               <td className="py-3 px-4">
-                                <div className="flex items-center gap-1.5">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleUpdateDraftQuantity(di.item_id, di.quantity - 1)}
-                                    className="w-5 h-5 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-bold"
-                                  >
-                                    -
-                                  </button>
-                                  <span className="font-extrabold text-amber-400 text-xs px-1">
-                                    {di.quantity}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleUpdateDraftQuantity(di.item_id, di.quantity + 1)}
-                                    className="w-5 h-5 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-bold"
-                                  >
-                                    +
-                                  </button>
-                                </div>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  placeholder="0"
+                                  value={di.quantity}
+                                  onChange={(e) => handleUpdateDraftQuantity(di.item_id, e.target.value)}
+                                  className="w-20 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-xs font-extrabold text-amber-400 focus:outline-none focus:border-purple-500 text-center"
+                                />
                               </td>
                               <td className="py-3 px-4 text-right">
                                 <button
@@ -1335,6 +2170,318 @@ export const LootQueueConsole: React.FC = () => {
                   Launch Raid Auction
                 </button>
               </form>
+            </div>
+          )}
+
+          {/* 3. AUCTION HISTORY SUB-VIEW */}
+          {auctionSubView === 'history' && (
+            <div className="space-y-6">
+              {/* Auction History Selector & Overview Banner */}
+              <div className="bg-slate-900/80 rounded-2xl border border-slate-800 p-6 space-y-6 shadow-xl">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+                  <div>
+                    <span className="text-[10px] font-extrabold uppercase tracking-widest text-purple-400 bg-purple-500/10 px-2.5 py-0.5 rounded-full border border-purple-500/20">
+                      Raid Auction History Log
+                    </span>
+                    <h2 className="text-xl font-black text-slate-100 mt-1 flex items-center gap-2">
+                      <History className="w-5 h-5 text-purple-400" />
+                      Auction History & Resolved Raid Summaries
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Select any active or past resolved raid auction to inspect item drops, candidates, and allocation winners.
+                    </p>
+                  </div>
+
+                  {/* Dropdown Selector for All Auctions */}
+                  <div className="w-full md:w-80 space-y-1">
+                    <label className="text-xs font-bold text-slate-300 block">Select Raid Auction:</label>
+                    <select
+                      value={selectedHistoryAuctionId || ''}
+                      onChange={(e) => setSelectedHistoryAuctionId(Number(e.target.value))}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-bold focus:outline-none focus:border-purple-500 shadow-inner"
+                    >
+                      {allAuctions.map((auc) => (
+                        <option key={auc.id} value={auc.id}>
+                          {auc.title} ({new Date(auc.auction_date).toLocaleDateString()}) - [{auc.status}]
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {selectedHistoryAuctionObj ? (
+                  <div className="space-y-6">
+                    {/* Auction Header Stats Bar */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                      <div className="p-4 bg-slate-950/70 rounded-xl border border-slate-800 space-y-1">
+                        <span className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">Raid Title</span>
+                        <p className="text-sm font-black text-slate-100 truncate">{selectedHistoryAuctionObj.title}</p>
+                      </div>
+                      <div className="p-4 bg-slate-950/70 rounded-xl border border-slate-800 space-y-1">
+                        <span className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">Raid Date</span>
+                        <p className="text-sm font-black text-purple-300">
+                          {new Date(selectedHistoryAuctionObj.auction_date).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <div className="p-4 bg-slate-950/70 rounded-xl border border-slate-800 space-y-1">
+                        <span className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">Auction Status</span>
+                        <div>
+                          <span
+                            className={`text-xs font-extrabold px-2.5 py-0.5 rounded-full border ${
+                              selectedHistoryAuctionObj.status === 'RESOLVED'
+                                ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                                : selectedHistoryAuctionObj.status === 'ACTIVE'
+                                ? 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+                                : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                            }`}
+                          >
+                            {selectedHistoryAuctionObj.status}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="p-4 bg-slate-950/70 rounded-xl border border-slate-800 space-y-1">
+                        <span className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">Total Items Drop</span>
+                        <p className="text-sm font-black text-amber-400">
+                          {selectedHistoryAuctionObj.auction_items?.length || 0} Items
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* 1 ITEM = 1 PAGE AUCTION SUMMARY CAROUSEL VIEWER */}
+                    {selectedHistoryAuctionObj.auction_items && selectedHistoryAuctionObj.auction_items.length > 0 ? (
+                      <div className="space-y-4">
+                        {/* Pagination Controls Header */}
+                        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-950 p-4 rounded-xl border border-slate-800">
+                          <div className="flex items-center gap-2">
+                            <Trophy className="w-5 h-5 text-amber-400" />
+                            <div>
+                              <h3 className="text-sm font-black uppercase text-slate-100">
+                                Raid Drop Summary Page
+                              </h3>
+                              <p className="text-[10px] font-semibold text-slate-400">
+                                1 Item per Page • Displaying Winners & Intent Breakdown
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-3">
+                            <button
+                              onClick={() => setHistoryAuctionItemIndex((prev) => Math.max(0, prev - 1))}
+                              disabled={safeHistoryItemIndex === 0}
+                              className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 disabled:opacity-40 transition-all"
+                            >
+                              <ChevronLeft className="w-4 h-4" />
+                            </button>
+
+                            <span className="text-xs font-black text-slate-300 px-3 py-1 bg-slate-900 rounded-md border border-slate-800 font-mono">
+                              Item {safeHistoryItemIndex + 1} of {selectedHistoryAuctionObj.auction_items.length}
+                            </span>
+
+                            <button
+                              onClick={() =>
+                                setHistoryAuctionItemIndex((prev) =>
+                                  Math.min((selectedHistoryAuctionObj.auction_items?.length || 1) - 1, prev + 1)
+                                )
+                              }
+                              disabled={safeHistoryItemIndex >= selectedHistoryAuctionObj.auction_items.length - 1}
+                              className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 disabled:opacity-40 transition-all"
+                            >
+                              <ChevronRight className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Quick Item Tab Pills for Direct 1-Click Jump by Name */}
+                        <div className="flex flex-wrap gap-2">
+                          {selectedHistoryAuctionObj.auction_items.map((ai, index) => (
+                            <button
+                              key={ai.id}
+                              onClick={() => setHistoryAuctionItemIndex(index)}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                                safeHistoryItemIndex === index
+                                  ? 'bg-amber-500 text-slate-950 shadow-md font-black'
+                                  : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
+                              }`}
+                            >
+                              {ai.item?.name}
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Current Item Page Card */}
+                        {currentHistoryAuctionItem && (
+                          <div className="bg-slate-950/90 rounded-2xl border border-amber-500/30 p-6 space-y-6 shadow-2xl">
+                            {/* Item Header Banner */}
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800">
+                              <div>
+                                <span className="text-[10px] font-extrabold uppercase text-amber-400 tracking-wider">
+                                  Item Drop #{safeHistoryItemIndex + 1}
+                                </span>
+                                <h4 className="text-lg font-black text-slate-100 flex items-center gap-2 mt-0.5">
+                                  <Shield className="w-5 h-5 text-amber-400" />
+                                  {currentHistoryAuctionItem.item?.name}
+                                </h4>
+                                <p className="text-xs text-slate-400 mt-1">{currentHistoryAuctionItem.item?.description}</p>
+                              </div>
+
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-xs font-black px-3 py-1 rounded-lg bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                  Raid Quantity: {currentHistoryAuctionItem.quantity}
+                                </span>
+                                <span
+                                  className={`text-xs font-black px-3 py-1 rounded-lg border ${
+                                    currentHistoryAuctionItem.status === 'RESOLVED'
+                                      ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                                      : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                                  }`}
+                                >
+                                  {currentHistoryAuctionItem.status}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Allocation Winners Section for this Item */}
+                            <div className="space-y-3">
+                              <h5 className="text-xs font-extrabold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                                <Award className="w-4 h-4 text-emerald-400" />
+                                Allocated Winner(s) for this Item Drop:
+                              </h5>
+
+                              {historyAllocationRecords.filter((r) => r.item_id === currentHistoryAuctionItem.item_id).length > 0 ? (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                  {historyAllocationRecords
+                                    .filter((r) => r.item_id === currentHistoryAuctionItem.item_id)
+                                    .map((winner) => (
+                                      <div
+                                        key={winner.id}
+                                        className="p-3.5 bg-slate-900/90 rounded-xl border border-emerald-500/30 flex items-center justify-between shadow-lg"
+                                      >
+                                        <div className="flex items-center gap-2.5">
+                                          <Crown className="w-4 h-4 text-amber-400 shrink-0" />
+                                          <div>
+                                            {renderMemberBadge(winner.member_name, winner.member_class)}
+                                            <span className="text-[10px] text-slate-400 block mt-1">
+                                              Allocated at: {new Date(winner.allocated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                            </span>
+                                          </div>
+                                        </div>
+                                        <span className="text-xs font-black text-amber-300 bg-amber-500/25 px-2.5 py-1 rounded-lg border border-amber-500/40">
+                                          Qty: {winner.allocated_quantity}
+                                        </span>
+                                      </div>
+                                    ))}
+                                </div>
+                              ) : (
+                                <div className="p-4 bg-slate-900/50 rounded-xl border border-slate-800 text-center">
+                                  <p className="text-xs text-slate-500 italic">No allocation winner recorded yet for this item drop.</p>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Candidates & Intents Section for this Item */}
+                            <div className="pt-4 border-t border-slate-800 space-y-3">
+                              <h5 className="text-xs font-extrabold uppercase tracking-wider text-purple-300 flex items-center gap-1.5">
+                                <Users className="w-4 h-4 text-purple-400" />
+                                Candidate Intents Registered ({currentHistoryAuctionItem.intents?.length || 0}):
+                              </h5>
+
+                              {currentHistoryAuctionItem.intents && currentHistoryAuctionItem.intents.length > 0 ? (
+                                <div className="flex flex-wrap gap-2">
+                                  {currentHistoryAuctionItem.intents.map((intent) => {
+                                    const qVal = intent.quantity !== undefined && intent.quantity > 0 ? intent.quantity : 1;
+                                    return (
+                                      <React.Fragment key={intent.id}>
+                                        {renderMemberBadge(
+                                          intent.member?.name || `Member #${intent.member_id}`,
+                                          intent.member?.class,
+                                          <span className="text-xs font-black text-amber-300 bg-amber-500/30 px-2 py-0.5 rounded-lg border border-amber-500/60 shadow-md ml-1 inline-flex items-center">
+                                            {qVal}
+                                          </span>
+                                        )}
+                                      </React.Fragment>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <p className="text-xs text-slate-500 italic">No intents registered for this item during this auction.</p>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Page Selector Thumbnail Dots */}
+                        <div className="flex items-center justify-center gap-1.5 pt-2">
+                          {selectedHistoryAuctionObj.auction_items.map((ai, index) => (
+                            <button
+                              key={ai.id}
+                              onClick={() => setHistoryAuctionItemIndex(index)}
+                              className={`h-2.5 rounded-full transition-all ${
+                                index === safeHistoryItemIndex
+                                  ? 'w-8 bg-purple-500'
+                                  : 'w-2.5 bg-slate-800 hover:bg-slate-700'
+                              }`}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-8 text-center bg-slate-950/60 rounded-xl border border-slate-800 text-slate-500 italic">
+                        No item drops found in this auction.
+                      </div>
+                    )}
+
+                    {/* Full Allocation Table for Selected History Auction */}
+                    <div className="pt-6 border-t border-slate-800 space-y-3">
+                      <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                        <ListChecks className="w-4 h-4 text-purple-400" />
+                        Complete Allocation History Log for {selectedHistoryAuctionObj.title}:
+                      </h4>
+
+                      {historyAllocationRecords.length > 0 ? (
+                        <div className="overflow-x-auto rounded-xl border border-slate-800">
+                          <table className="w-full text-left text-xs text-slate-300">
+                            <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] font-extrabold">
+                              <tr>
+                                <th className="px-4 py-3">Item Name</th>
+                                <th className="px-4 py-3">Winner Guild Member</th>
+                                <th className="px-4 py-3 text-center">Allocated Qty</th>
+                                <th className="px-4 py-3 text-right">Allocated Timestamp</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-800/60 bg-slate-900/40">
+                              {historyAllocationRecords.map((rec) => (
+                                <tr key={rec.id} className="hover:bg-slate-800/30">
+                                  <td className="px-4 py-3 font-bold text-slate-100 flex items-center gap-1.5">
+                                    <Shield className="w-3.5 h-3.5 text-amber-400" />
+                                    {rec.item_name}
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    {renderMemberBadge(rec.member_name, rec.member_class)}
+                                  </td>
+                                  <td className="px-4 py-3 text-center">
+                                    <span className="font-black text-amber-300 bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/30">
+                                      {rec.allocated_quantity}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3 text-right text-slate-400 text-[11px]">
+                                    {new Date(rec.allocated_at).toLocaleString()}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-500 italic">No allocation logs recorded yet for this auction.</p>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-8 text-center text-slate-500 italic">
+                    No raid auctions available in history yet.
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </main>
@@ -1719,460 +2866,574 @@ export const LootQueueConsole: React.FC = () => {
         </main>
       )}
 
-      {/* PAGE 3: UNIFIED ITEMS & CATALOG PAGE (3 SECTIONS: 1. Create/Add Item, 2. Rank History Matrix, 3. Priority Queue) */}
+      {/* PAGE 3: ITEMS HUB (3 DISTINCT SUB-PAGES: 1. Item List & Add Form, 2. Rank History, 3. Priority Queue) */}
       {activePage === 'items' && (
-        <main className="max-w-7xl mx-auto px-4 md:px-8 mt-6 space-y-8">
-          {/* Page Header */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-900/60 p-4 rounded-2xl border border-slate-800">
+        <main className="max-w-7xl mx-auto px-4 md:px-8 mt-6 space-y-6">
+          {/* Sub-view Navigation Bar for Items Page */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-slate-900/60 p-4 rounded-2xl border border-slate-800">
             <div className="flex items-center gap-3">
               <Package className="w-5 h-5 text-purple-400 shrink-0" />
               <div>
                 <h2 className="text-sm font-extrabold text-slate-100 uppercase tracking-wider">
-                  Raid Items, Priority Queue & Rank Matrix ({items.length})
+                  Raid Items & Priority Console ({items.length})
                 </h2>
                 <p className="text-xs text-slate-400">
-                  Manage raid loot catalog items, view rank progression timeline matrices, and inspect priority queue standings.
+                  Select a sub-page below to view/add catalog items, inspect rank history matrices, or check live queue standings.
                 </p>
               </div>
             </div>
 
-            <button
-              onClick={() => setShowCreateItemForm(!showCreateItemForm)}
-              className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-md shadow-purple-600/20"
-            >
-              <PlusCircle className="w-4 h-4" />
-              {showCreateItemForm ? 'Close Add Form' : '1. Create / Add New Item'}
-            </button>
-          </div>
+            {/* 3 Sub-View Navigation Buttons */}
+            <div className="flex flex-wrap items-center gap-2 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
+              <button
+                onClick={() => setItemSubView('list')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-extrabold transition-all ${
+                  itemSubView === 'list'
+                    ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                }`}
+              >
+                <Package className="w-3.5 h-3.5" />
+                1. Item List ({items.length})
+              </button>
 
-          {/* SECTION 1: CREATE / ADD ITEM FORM */}
-          {showCreateItemForm && (
-            <section className="bg-slate-900/90 rounded-2xl border border-purple-500/40 p-6 space-y-4 shadow-2xl">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-                <h3 className="text-sm font-black text-slate-100 flex items-center gap-2">
-                  <PlusCircle className="w-4 h-4 text-purple-400" />
-                  Section 1: Create / Add New Raid Item
-                </h3>
-                <button onClick={() => setShowCreateItemForm(false)} className="text-slate-400 hover:text-white">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
+              <button
+                onClick={() => setItemSubView('rank_history')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-extrabold transition-all ${
+                  itemSubView === 'rank_history'
+                    ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                2. Rank History
+              </button>
 
-              <form onSubmit={handleCreateItem} className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-slate-300 block">Item Name:</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Atiesh, Greatstaff of the Guardian"
-                      value={newItemName}
-                      onChange={(e) => setNewItemName(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-100 focus:outline-none focus:border-purple-500"
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-slate-300 block">Description & Raid Notes:</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Legendary staff forged from Medivh's power..."
-                      value={newItemDesc}
-                      onChange={(e) => setNewItemDesc(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-100 focus:outline-none focus:border-purple-500"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between pt-2">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      id="repeatable_unified"
-                      checked={newItemRepeatable}
-                      onChange={(e) => setNewItemRepeatable(e.target.checked)}
-                      className="w-4 h-4 accent-purple-600 rounded"
-                    />
-                    <label htmlFor="repeatable_unified" className="text-xs font-semibold text-slate-200 cursor-pointer">
-                      Is Repeatable Drop (Allows winners to re-enter waiting queue after rotation)
-                    </label>
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="px-6 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-extrabold rounded-xl shadow-md shadow-purple-600/20"
-                  >
-                    Save Raid Item
-                  </button>
-                </div>
-              </form>
-            </section>
-          )}
-
-          {/* Item Selector Pills */}
-          <div className="bg-slate-900/60 rounded-2xl border border-slate-800 p-4 space-y-3">
-            <span className="text-xs font-extrabold uppercase tracking-wider text-slate-400 block">
-              Select Raid Item to View Rank History & Priority Queue:
-            </span>
-            <div className="flex flex-wrap gap-2">
-              {items.map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => setSelectedQueueItemId(item.id)}
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                    selectedQueueItemId === item.id
-                      ? 'bg-purple-600 text-white shadow-md'
-                      : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
-                  }`}
-                >
-                  {item.name}
-                </button>
-              ))}
+              <button
+                onClick={() => setItemSubView('priority_queue')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-extrabold transition-all ${
+                  itemSubView === 'priority_queue'
+                    ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                }`}
+              >
+                <ListChecks className="w-3.5 h-3.5" />
+                3. Priority Queue
+              </button>
             </div>
           </div>
 
-          {/* Selected Item Info Banner */}
-          {selectedItemObj && (
-            <div className="p-4 bg-slate-900/80 rounded-2xl border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2">
-                  <Shield className="w-5 h-5 text-amber-400" />
-                  <h3 className="text-base font-black text-slate-100">{selectedItemObj.name}</h3>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                    {selectedItemObj.is_repeatable ? 'Repeatable Drop' : 'One-Time Drop'}
-                  </span>
+          {/* SUB-PAGE 1: ITEM LIST & CREATE / ADD NEW ITEM */}
+          {itemSubView === 'list' && (
+            <div className="space-y-6">
+              {/* Create / Add Item Section */}
+              <section className="bg-slate-900/90 rounded-2xl border border-purple-500/40 p-6 space-y-4 shadow-2xl">
+                <div className="pb-3 border-b border-slate-800">
+                  <h3 className="text-sm font-black text-slate-100 flex items-center gap-2">
+                    <PlusCircle className="w-4 h-4 text-purple-400" />
+                    Create / Add New Raid Item to Catalog
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Register a new raid drop into the global catalog so it can be added to auctions and queued by members.
+                  </p>
                 </div>
-                <p className="text-xs text-slate-400 mt-1">{selectedItemObj.description}</p>
-              </div>
 
-              <div className="flex items-center gap-4 text-xs">
-                <div className="text-center px-3 py-1.5 bg-slate-950 rounded-xl border border-slate-800">
-                  <span className="text-[10px] text-slate-500 font-extrabold block">Past Auctions</span>
-                  <span className="font-black text-purple-300">{chronologicalAuctions.length}</span>
-                </div>
-                <div className="text-center px-3 py-1.5 bg-slate-950 rounded-xl border border-slate-800">
-                  <span className="text-[10px] text-slate-500 font-extrabold block">Total Winners</span>
-                  <span className="font-black text-emerald-400">{historyItems.length}</span>
-                </div>
-              </div>
-            </div>
-          )}
+                <form onSubmit={handleCreateItem} className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-300 block">Item Name:</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Atiesh, Greatstaff of the Guardian"
+                        value={newItemName}
+                        onChange={(e) => setNewItemName(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-purple-500"
+                        required
+                      />
+                    </div>
 
-          {/* SECTION 2: RANK HISTORY MATRIX */}
-          <section className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-black uppercase tracking-wider text-slate-100 flex items-center gap-2">
-                <Layers className="w-4.5 h-4.5 text-purple-400" />
-                Section 2: Rank History Matrix (Ordered Ascendingly 1..N)
-              </h3>
-            </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-300 block">Description & Raid Notes:</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Legendary staff forged from Medivh's power..."
+                        value={newItemDesc}
+                        onChange={(e) => setNewItemDesc(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-purple-500"
+                      />
+                    </div>
+                  </div>
 
-            {/* Player Selection / Highlight Toolbar */}
-            <div className="bg-slate-900/80 rounded-2xl border border-slate-800 p-4 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-extrabold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5" />
-                  Select Player to Highlight Rank Progression Across Timeline:
-                </span>
-                {selectedHighlightMemberId && (
-                  <button
-                    onClick={() => setSelectedHighlightMemberId(null)}
-                    className="text-[11px] font-bold text-rose-400 hover:text-rose-300 flex items-center gap-1"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                    Clear Highlight
-                  </button>
-                )}
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {members.map((mem) => {
-                  const isSelected = selectedHighlightMemberId === mem.id;
-                  return (
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-800/80">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="repeatable_subpage"
+                        checked={newItemRepeatable}
+                        onChange={(e) => setNewItemRepeatable(e.target.checked)}
+                        className="w-4 h-4 accent-purple-600 rounded"
+                      />
+                      <label htmlFor="repeatable_subpage" className="text-xs font-semibold text-slate-200 cursor-pointer">
+                        Is Repeatable Drop (Allows winners to re-enter waiting queue after rotation)
+                      </label>
+                    </div>
+
                     <button
-                      key={mem.id}
-                      onClick={() => setSelectedHighlightMemberId(isSelected ? null : mem.id)}
-                      className="transition-all hover:scale-105"
+                      type="submit"
+                      disabled={loading}
+                      className="px-6 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-extrabold rounded-xl shadow-md shadow-purple-600/20"
                     >
-                      {renderMemberBadge(
-                        mem.name,
-                        mem.class,
-                        isSelected ? <Sparkles className="w-3 h-3 text-amber-400" /> : undefined
-                      )}
+                      Save Raid Item
                     </button>
-                  );
-                })}
+                  </div>
+                </form>
+              </section>
+
+              {/* All Catalog Raid Items Table */}
+              <div className="space-y-3">
+                <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                  <Package className="w-4 h-4 text-purple-400" />
+                  Raid Items Directory ({items.length})
+                </h3>
+
+                <div className="bg-slate-900/60 rounded-xl border border-slate-800 overflow-hidden shadow-xl">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-900 border-b border-slate-800 text-slate-400 font-semibold uppercase">
+                        <th className="py-3 px-4">Item Name</th>
+                        <th className="py-3 px-4">Description</th>
+                        <th className="py-3 px-4">Repeatable Drop</th>
+                        <th className="py-3.5 px-4 text-right">Quick Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                      {items.map((item) => (
+                        <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
+                          <td className="py-3 px-4 font-bold text-slate-100">{item.name}</td>
+                          <td className="py-3 px-4 text-slate-400">{item.description}</td>
+                          <td className="py-3 px-4">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                item.is_repeatable
+                                  ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                                  : 'bg-slate-800 text-slate-400'
+                              }`}
+                            >
+                              {item.is_repeatable ? 'Yes' : 'No'}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-right space-x-2">
+                            <button
+                              onClick={() => {
+                                setSelectedQueueItemId(item.id);
+                                setItemSubView('rank_history');
+                              }}
+                              className="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-purple-300 rounded-lg text-[11px] font-semibold"
+                            >
+                              Rank History
+                            </button>
+                            <button
+                              onClick={() => {
+                                setSelectedQueueItemId(item.id);
+                                setItemSubView('priority_queue');
+                              }}
+                              className="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-amber-300 rounded-lg text-[11px] font-semibold"
+                            >
+                              Priority Queue
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
+          )}
 
-            {/* Rank-Indexed Matrix Table (Ordered Ascendingly 1..N) */}
-            <div className="bg-slate-900/80 rounded-2xl border border-slate-800 overflow-hidden shadow-xl space-y-3">
-              <div className="p-4 bg-slate-900 border-b border-slate-800 flex items-center justify-between">
-                <h4 className="text-xs font-black uppercase tracking-wider text-slate-200 flex items-center gap-2">
-                  <Layers className="w-4 h-4 text-purple-400" />
-                  Chronological Auction Timeline (Left → Right)
-                </h4>
-                <span className="text-[11px] text-slate-400">
-                  Click any player name to highlight rank movements across all auctions
+          {/* SUB-PAGE 2: RANK HISTORY MATRIX */}
+          {itemSubView === 'rank_history' && (
+            <div className="space-y-6">
+              {/* Item Selector Pills */}
+              <div className="bg-slate-900/60 rounded-2xl border border-slate-800 p-4 space-y-3">
+                <span className="text-xs font-extrabold uppercase tracking-wider text-slate-400 block">
+                  Select Raid Item to View Rank History Timeline Matrix:
                 </span>
+                <div className="flex flex-wrap gap-2">
+                  {items.map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => setSelectedQueueItemId(item.id)}
+                      className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                        selectedQueueItemId === item.id
+                          ? 'bg-purple-600 text-white shadow-md'
+                          : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
+                      }`}
+                    >
+                      {item.name}
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
-                  <thead>
-                    <tr className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase">
-                      <th className="py-3.5 px-4 sticky left-0 bg-slate-950 z-10 border-r border-slate-800 text-center w-24">
-                        Priority Rank
-                      </th>
-                      {chronologicalAuctions.length > 0 ? (
-                        chronologicalAuctions.map((auc) => (
-                          <th key={auc.id} className="py-3.5 px-6 border-r border-slate-800 text-center min-w-[200px]">
-                            <span className="text-slate-200 block truncate max-w-[190px]">{auc.title}</span>
-                            <span className="text-[10px] text-purple-400 font-mono font-normal block">
-                              {new Date(auc.date).toLocaleDateString()}
-                            </span>
-                          </th>
-                        ))
-                      ) : (
-                        <th className="py-3.5 px-6 text-slate-500 italic font-normal">
-                          No past auctions recorded yet for this item
-                        </th>
-                      )}
-                      <th className="py-3.5 px-4 text-center bg-slate-950 min-w-[200px]">Current Live Rank</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                    {rankRowNumbers.map((rankNum) => (
-                      <tr key={rankNum} className="hover:bg-slate-800/40 transition-colors">
-                        {/* Priority Rank Header (Sticky Left Column) */}
-                        <td className="py-3.5 px-4 font-black text-amber-400 sticky left-0 bg-slate-900 border-r border-slate-800 text-center">
-                          #{rankNum}
-                        </td>
+              {/* Selected Item Info Banner */}
+              {selectedItemObj && (
+                <div className="p-4 bg-slate-900/80 rounded-2xl border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Shield className="w-5 h-5 text-amber-400" />
+                      <h3 className="text-base font-black text-slate-100">{selectedItemObj.name}</h3>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                        {selectedItemObj.is_repeatable ? 'Repeatable Drop' : 'One-Time Drop'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-1">{selectedItemObj.description}</p>
+                  </div>
 
-                        {/* Auction Snapshot Columns */}
-                        {chronologicalAuctions.length > 0 ? (
-                          chronologicalAuctions.map((auc) => {
-                            const snapshot = auctionRankToItemMap[auc.id]?.[rankNum];
-                            if (!snapshot) {
+                  <div className="flex items-center gap-4 text-xs">
+                    <div className="text-center px-3 py-1.5 bg-slate-950 rounded-xl border border-slate-800">
+                      <span className="text-[10px] text-slate-500 font-extrabold block">Past Auctions</span>
+                      <span className="font-black text-purple-300">{chronologicalAuctions.length}</span>
+                    </div>
+                    <div className="text-center px-3 py-1.5 bg-slate-950 rounded-xl border border-slate-800">
+                      <span className="text-[10px] text-slate-500 font-extrabold block">Total Winners</span>
+                      <span className="font-black text-emerald-400">{historyItems.length}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* RANK HISTORY MATRIX SECTION */}
+              <section className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-black uppercase tracking-wider text-slate-100 flex items-center gap-2">
+                    <Layers className="w-4.5 h-4.5 text-purple-400" />
+                    Rank History Matrix (Ordered Ascendingly 1..N)
+                  </h3>
+                </div>
+
+                {/* Player Selection / Highlight Toolbar */}
+                <div className="bg-slate-900/80 rounded-2xl border border-slate-800 p-4 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-extrabold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5" />
+                      Select Player to Highlight Rank Progression Across Timeline:
+                    </span>
+                    {selectedHighlightMemberId && (
+                      <button
+                        onClick={() => setSelectedHighlightMemberId(null)}
+                        className="text-[11px] font-bold text-rose-400 hover:text-rose-300 flex items-center gap-1"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        Clear Highlight
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {members.map((mem) => {
+                      const isSelected = selectedHighlightMemberId === mem.id;
+                      return (
+                        <button
+                          key={mem.id}
+                          onClick={() => setSelectedHighlightMemberId(isSelected ? null : mem.id)}
+                          className="transition-all hover:scale-105"
+                        >
+                          {renderMemberBadge(
+                            mem.name,
+                            mem.class,
+                            isSelected ? <Sparkles className="w-3 h-3 text-amber-400" /> : undefined
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Rank-Indexed Matrix Table (Ordered Ascendingly 1..N) */}
+                <div className="bg-slate-900/80 rounded-2xl border border-slate-800 overflow-hidden shadow-xl space-y-3">
+                  <div className="p-4 bg-slate-900 border-b border-slate-800 flex items-center justify-between">
+                    <h4 className="text-xs font-black uppercase tracking-wider text-slate-200 flex items-center gap-2">
+                      <Layers className="w-4 h-4 text-purple-400" />
+                      Chronological Auction Timeline (Left → Right)
+                    </h4>
+                    <span className="text-[11px] text-slate-400">
+                      Click any player name to highlight rank movements across all auctions
+                    </span>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                      <thead>
+                        <tr className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase">
+                          <th className="py-3.5 px-4 sticky left-0 bg-slate-950 z-10 border-r border-slate-800 text-center w-24">
+                            Priority Rank
+                          </th>
+                          {chronologicalAuctions.length > 0 ? (
+                            chronologicalAuctions.map((auc) => (
+                              <th key={auc.id} className="py-3.5 px-6 border-r border-slate-800 text-center min-w-[200px]">
+                                <span className="text-slate-200 block truncate max-w-[190px]">{auc.title}</span>
+                                <span className="text-[10px] text-purple-400 font-mono font-normal block">
+                                  {new Date(auc.date).toLocaleDateString()}
+                                </span>
+                              </th>
+                            ))
+                          ) : (
+                            <th className="py-3.5 px-6 text-slate-500 italic font-normal">
+                              No past auctions recorded yet for this item
+                            </th>
+                          )}
+                          <th className="py-3.5 px-4 text-center bg-slate-950 min-w-[200px]">Current Live Rank</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                        {rankRowNumbers.map((rankNum) => (
+                          <tr key={rankNum} className="hover:bg-slate-800/40 transition-colors">
+                            {/* Priority Rank Header (Sticky Left Column) */}
+                            <td className="py-3.5 px-4 font-black text-amber-400 sticky left-0 bg-slate-900 border-r border-slate-800 text-center">
+                              #{rankNum}
+                            </td>
+
+                            {/* Auction Snapshot Columns */}
+                            {chronologicalAuctions.length > 0 ? (
+                              chronologicalAuctions.map((auc) => {
+                                const snapshot = auctionRankToItemMap[auc.id]?.[rankNum];
+                                if (!snapshot) {
+                                  return (
+                                    <td key={auc.id} className="py-3.5 px-6 border-r border-slate-800/60 text-center text-slate-600 font-mono">
+                                      —
+                                    </td>
+                                  );
+                                }
+
+                                const isWinner = historyItems.some(
+                                  (h) => h.member_id === snapshot.member_id && h.auction_id === auc.id
+                                );
+                                const isHighlighted = selectedHighlightMemberId === snapshot.member_id;
+
+                                return (
+                                  <td key={auc.id} className="py-2.5 px-4 border-r border-slate-800/60 text-center">
+                                    <button
+                                      onClick={() =>
+                                        setSelectedHighlightMemberId(isHighlighted ? null : snapshot.member_id)
+                                      }
+                                      className="transition-all hover:scale-105"
+                                    >
+                                      {renderMemberBadge(
+                                        snapshot.member_name,
+                                        snapshot.member_class,
+                                        isWinner ? <Trophy className="w-3 h-3 text-amber-400 shrink-0" /> : undefined
+                                      )}
+                                    </button>
+                                  </td>
+                                );
+                              })
+                            ) : (
+                              <td colSpan={1} className="py-3.5 px-6 text-center text-slate-600">
+                                —
+                              </td>
+                            )}
+
+                            {/* Current Live Rank Column */}
+                            {(() => {
+                              const liveRanking = liveRankToItemMap[rankNum];
+                              if (!liveRanking) {
+                                return <td className="py-3.5 px-4 text-center text-slate-600 font-mono">—</td>;
+                              }
+
+                              const isHighlighted = selectedHighlightMemberId === liveRanking.member_id;
+
                               return (
-                                <td key={auc.id} className="py-3.5 px-6 border-r border-slate-800/60 text-center text-slate-600 font-mono">
-                                  —
+                                <td className="py-2.5 px-4 text-center">
+                                  <button
+                                    onClick={() =>
+                                      setSelectedHighlightMemberId(isHighlighted ? null : liveRanking.member_id)
+                                    }
+                                    className="transition-all hover:scale-105"
+                                  >
+                                    {renderMemberBadge(
+                                      liveRanking.member_name || `Member #${liveRanking.member_id}`,
+                                      liveRanking.member?.class,
+                                      <span className="text-[10px] font-mono text-slate-400">#{liveRanking.rank}</span>
+                                    )}
+                                  </button>
                                 </td>
                               );
-                            }
-
-                            const isWinner = historyItems.some(
-                              (h) => h.member_id === snapshot.member_id && h.auction_id === auc.id
-                            );
-                            const isHighlighted = selectedHighlightMemberId === snapshot.member_id;
-
-                            return (
-                              <td key={auc.id} className="py-2.5 px-4 border-r border-slate-800/60 text-center">
-                                <button
-                                  onClick={() =>
-                                    setSelectedHighlightMemberId(isHighlighted ? null : snapshot.member_id)
-                                  }
-                                  className="transition-all hover:scale-105"
-                                >
-                                  {renderMemberBadge(
-                                    snapshot.member_name,
-                                    snapshot.member_class,
-                                    isWinner ? <Trophy className="w-3 h-3 text-amber-400 shrink-0" /> : undefined
-                                  )}
-                                </button>
-                              </td>
-                            );
-                          })
-                        ) : (
-                          <td colSpan={1} className="py-3.5 px-6 text-center text-slate-600">
-                            —
-                          </td>
-                        )}
-
-                        {/* Current Live Rank Column */}
-                        {(() => {
-                          const liveRanking = liveRankToItemMap[rankNum];
-                          if (!liveRanking) {
-                            return <td className="py-3.5 px-4 text-center text-slate-600 font-mono">—</td>;
-                          }
-
-                          const isHighlighted = selectedHighlightMemberId === liveRanking.member_id;
-
-                          return (
-                            <td className="py-2.5 px-4 text-center">
-                              <button
-                                onClick={() =>
-                                  setSelectedHighlightMemberId(isHighlighted ? null : liveRanking.member_id)
-                                }
-                                className="transition-all hover:scale-105"
-                              >
-                                {renderMemberBadge(
-                                  liveRanking.member_name || `Member #${liveRanking.member_id}`,
-                                  liveRanking.member?.class,
-                                  <span className="text-[10px] font-mono text-slate-400">#{liveRanking.rank}</span>
-                                )}
-                              </button>
-                            </td>
-                          );
-                        })()}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                            })()}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
             </div>
-          </section>
+          )}
 
-          {/* SECTION 3: PRIORITY QUEUE & WINNER HISTORY */}
-          <section className="space-y-4">
-            <h3 className="text-sm font-black uppercase tracking-wider text-slate-100 flex items-center gap-2">
-              <ListChecks className="w-4.5 h-4.5 text-purple-400" />
-              Section 3: Live Priority Queue & Winner Allocations
-            </h3>
+          {/* SUB-PAGE 3: PRIORITY QUEUE & WINNER HISTORY */}
+          {itemSubView === 'priority_queue' && (
+            <div className="space-y-6">
+              {/* Item Selector Pills */}
+              <div className="bg-slate-900/60 rounded-2xl border border-slate-800 p-4 space-y-3">
+                <span className="text-xs font-extrabold uppercase tracking-wider text-slate-400 block">
+                  Select Raid Item to View Live Priority Queue Standings:
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  {items.map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => setSelectedQueueItemId(item.id)}
+                      className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                        selectedQueueItemId === item.id
+                          ? 'bg-purple-600 text-white shadow-md'
+                          : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
+                      }`}
+                    >
+                      {item.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              {/* Live Priority Queue Rankings Table */}
-              <div className="lg:col-span-7 space-y-3">
-                <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-                  <ListChecks className="w-4 h-4 text-purple-400" />
-                  Live Priority Queue Rankings (1..M)
-                </h4>
+              {/* Selected Item Info Banner */}
+              {selectedItemObj && (
+                <div className="p-4 bg-slate-900/80 rounded-2xl border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Shield className="w-5 h-5 text-amber-400" />
+                      <h3 className="text-base font-black text-slate-100">{selectedItemObj.name}</h3>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                        {selectedItemObj.is_repeatable ? 'Repeatable Drop' : 'One-Time Drop'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-1">{selectedItemObj.description}</p>
+                  </div>
 
-                <div className="bg-slate-900/60 rounded-xl border border-slate-800 overflow-hidden">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="bg-slate-900 border-b border-slate-800 text-slate-400 font-semibold uppercase">
-                        <th className="py-3 px-4">Rank</th>
-                        <th className="py-3 px-4">Guild Member</th>
-                        <th className="py-3 px-4">Status</th>
-                        <th className="py-3 px-4">Rank Movement</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                      {queueRankings.length > 0 ? (
-                        queueRankings.map((r) => {
-                          const isWinner = historyItems.some((h) => h.member_id === r.member_id && h.item_id === r.item_id);
-                          return (
-                            <tr key={r.id} className="hover:bg-slate-800/40 transition-colors">
-                              <td className="py-3 px-4 font-extrabold text-amber-400">#{r.rank}</td>
-                              <td className="py-3 px-4">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  {renderMemberBadge(r.member_name || `Member #${r.member_id}`, r.member?.class)}
-                                </div>
-                                <span className="text-[10px] text-slate-500 font-mono block mt-0.5">{r.discord_id}</span>
-                              </td>
-                              <td className="py-3 px-4">
-                                <span
-                                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                    r.status === 'WAITING'
-                                      ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
-                                      : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                                  }`}
-                                >
-                                  {r.status}
-                                </span>
-                              </td>
-                              <td className="py-3 px-4">
-                                {renderRankMovementBadge(r.member_id, r.rank, isWinner && r.status === 'PAST_WINNER')}
+                  <div className="flex items-center gap-4 text-xs">
+                    <div className="text-center px-3 py-1.5 bg-slate-950 rounded-xl border border-slate-800">
+                      <span className="text-[10px] text-slate-500 font-extrabold block">Past Auctions</span>
+                      <span className="font-black text-purple-300">{chronologicalAuctions.length}</span>
+                    </div>
+                    <div className="text-center px-3 py-1.5 bg-slate-950 rounded-xl border border-slate-800">
+                      <span className="text-[10px] text-slate-500 font-extrabold block">Total Winners</span>
+                      <span className="font-black text-emerald-400">{historyItems.length}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* PRIORITY QUEUE SECTION */}
+              <section className="space-y-4">
+                <h3 className="text-sm font-black uppercase tracking-wider text-slate-100 flex items-center gap-2">
+                  <ListChecks className="w-4.5 h-4.5 text-purple-400" />
+                  Live Priority Queue & Winner Allocations
+                </h3>
+
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                  {/* Live Priority Queue Rankings Table */}
+                  <div className="lg:col-span-7 space-y-3">
+                    <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                      <ListChecks className="w-4 h-4 text-purple-400" />
+                      Live Priority Queue Rankings (1..M)
+                    </h4>
+
+                    <div className="bg-slate-900/60 rounded-xl border border-slate-800 overflow-hidden shadow-xl">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="bg-slate-900 border-b border-slate-800 text-slate-400 font-semibold uppercase">
+                            <th className="py-3 px-4">Rank</th>
+                            <th className="py-3 px-4">Guild Member</th>
+                            <th className="py-3 px-4">Status</th>
+                            <th className="py-3 px-4">Rank Movement</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                          {queueRankings.length > 0 ? (
+                            queueRankings.map((r) => {
+                              const isWinner = historyItems.some((h) => h.member_id === r.member_id && h.item_id === r.item_id);
+                              return (
+                                <tr key={r.id} className="hover:bg-slate-800/40 transition-colors">
+                                  <td className="py-3 px-4 font-extrabold text-amber-400">#{r.rank}</td>
+                                  <td className="py-3 px-4">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      {renderMemberBadge(r.member_name || `Member #${r.member_id}`, r.member?.class)}
+                                    </div>
+                                    <span className="text-[10px] text-slate-500 font-mono block mt-0.5">{r.discord_id}</span>
+                                  </td>
+                                  <td className="py-3 px-4">
+                                    <span
+                                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                        r.status === 'WAITING'
+                                          ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                                          : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                      }`}
+                                    >
+                                      {r.status}
+                                    </span>
+                                  </td>
+                                  <td className="py-3 px-4">
+                                    {renderRankMovementBadge(r.member_id, r.rank, isWinner && r.status === 'PAST_WINNER')}
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          ) : (
+                            <tr>
+                              <td colSpan={4} className="py-6 text-center text-slate-500">
+                                No active queue rankings recorded for this item yet.
                               </td>
                             </tr>
-                          );
-                        })
-                      ) : (
-                        <tr>
-                          <td colSpan={4} className="py-6 text-center text-slate-500">
-                            No active queue rankings recorded for this item yet.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
 
-              {/* Allocation Winner History */}
-              <div className="lg:col-span-5 space-y-3">
-                <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-                  <History className="w-4 h-4 text-indigo-400" />
-                  Allocation Winner History
-                </h4>
+                  {/* Allocation Winner History */}
+                  <div className="lg:col-span-5 space-y-3">
+                    <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                      <History className="w-4 h-4 text-indigo-400" />
+                      Allocation Winner History
+                    </h4>
 
-                <div className="bg-slate-900/60 rounded-xl border border-slate-800 overflow-hidden">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="bg-slate-900 border-b border-slate-800 text-slate-400 font-semibold uppercase">
-                        <th className="py-3 px-4">Winner</th>
-                        <th className="py-3 px-4">Auction</th>
-                        <th className="py-3 px-4">Allocated At</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                      {historyItems.length > 0 ? (
-                        historyItems.map((h) => (
-                          <tr key={h.id} className="hover:bg-slate-800/40 transition-colors">
-                            <td className="py-3 px-4">
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                {renderMemberBadge(h.member_name, h.member_class, <Trophy className="w-3.5 h-3.5 text-amber-400 shrink-0" />)}
-                              </div>
-                            </td>
-                            <td className="py-3 px-4 text-slate-400 truncate max-w-[120px]">{h.auction_title}</td>
-                            <td className="py-3 px-4 text-slate-400 font-mono text-[11px]">
-                              {new Date(h.allocated_at).toLocaleTimeString()}
-                            </td>
+                    <div className="bg-slate-900/60 rounded-xl border border-slate-800 overflow-hidden shadow-xl">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="bg-slate-900 border-b border-slate-800 text-slate-400 font-semibold uppercase">
+                            <th className="py-3 px-4">Winner</th>
+                            <th className="py-3 px-4">Auction</th>
+                            <th className="py-3 px-4">Allocated At</th>
                           </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan={3} className="py-6 text-center text-slate-500">
-                            No resolved allocations for this item yet.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                          {historyItems.length > 0 ? (
+                            historyItems.map((h) => (
+                              <tr key={h.id} className="hover:bg-slate-800/40 transition-colors">
+                                <td className="py-3 px-4">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    {renderMemberBadge(h.member_name, h.member_class, <Trophy className="w-3.5 h-3.5 text-amber-400 shrink-0" />)}
+                                  </div>
+                                </td>
+                                <td className="py-3 px-4 text-slate-400 truncate max-w-[120px]">{h.auction_title}</td>
+                                <td className="py-3 px-4 text-slate-400 font-mono text-[11px]">
+                                  {new Date(h.allocated_at).toLocaleTimeString()}
+                                </td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td colSpan={3} className="py-6 text-center text-slate-500">
+                                No resolved allocations for this item yet.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              </section>
             </div>
-          </section>
-
-          {/* Section 4: Raid Catalog Items List Table */}
-          <div className="space-y-3 pt-6 border-t border-slate-800">
-            <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-              <Package className="w-4 h-4 text-purple-400" />
-              All Catalog Raid Items ({items.length})
-            </h3>
-
-            <div className="bg-slate-900/60 rounded-xl border border-slate-800 overflow-hidden">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-slate-900 border-b border-slate-800 text-slate-400 font-semibold uppercase">
-                    <th className="py-3 px-4">Item Name</th>
-                    <th className="py-3 px-4">Description</th>
-                    <th className="py-3 px-4">Repeatable Drop</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                  {items.map((item) => (
-                    <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
-                      <td className="py-3 px-4 font-bold text-slate-100">{item.name}</td>
-                      <td className="py-3 px-4 text-slate-400">{item.description}</td>
-                      <td className="py-3 px-4">
-                        <span
-                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            item.is_repeatable
-                              ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
-                              : 'bg-slate-800 text-slate-400'
-                          }`}
-                        >
-                          {item.is_repeatable ? 'Yes' : 'No'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          )}
         </main>
       )}
 

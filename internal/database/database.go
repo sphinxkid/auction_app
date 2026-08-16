@@ -63,6 +63,9 @@ func InitDB(cfg *config.Config) (*gorm.DB, error) {
 		return nil, fmt.Errorf("failed to run auto migrations: %w", err)
 	}
 
+	// Ensure default quantity for any existing SQLite records
+	_ = db.Exec("UPDATE intent_to_buys SET quantity = 1 WHERE quantity <= 0 OR quantity IS NULL;").Error
+
 	log.Println("Database connection established and schema auto-migrated successfully.")
 	return db, nil
 }

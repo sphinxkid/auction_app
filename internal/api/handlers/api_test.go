@@ -247,8 +247,21 @@ func TestAPI_Step3EndpointsWorkflow(t *testing.T) {
 	_ = json.NewDecoder(res.Body).Decode(&resolveBRes)
 	res.Body.Close()
 
-	if resolveBRes.AuctionStatus != models.AuctionStatusResolved {
-		t.Errorf("Expected Parent Auction status RESOLVED after resolving item B, got %s", resolveBRes.AuctionStatus)
+	if resolveBRes.AuctionStatus != models.AuctionStatusActive {
+		t.Errorf("Expected Parent Auction status ACTIVE before finalization, got %s", resolveBRes.AuctionStatus)
+	}
+
+	// 10. Test POST /api/v1/auctions/:id/finalize
+	finRes, err := http.Post(ts.URL+"/api/v1/auctions/"+strconvFormat(createdAuction.ID)+"/finalize", "application/json", nil)
+	if err != nil || finRes.StatusCode != http.StatusOK {
+		t.Fatalf("POST /api/v1/auctions/:id/finalize failed: %v", err)
+	}
+	var finalizedAuction models.Auction
+	_ = json.NewDecoder(finRes.Body).Decode(&finalizedAuction)
+	finRes.Body.Close()
+
+	if finalizedAuction.Status != models.AuctionStatusResolved {
+		t.Errorf("Expected finalized auction status RESOLVED, got %s", finalizedAuction.Status)
 	}
 
 	// 10. Test GET /api/v1/history/ranks/items/:id

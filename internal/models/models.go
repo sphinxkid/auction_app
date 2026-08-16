@@ -77,6 +77,7 @@ type IntentToBuy struct {
 	ID            uint         `gorm:"primaryKey;autoIncrement" json:"id"`
 	AuctionItemID uint         `gorm:"not null;index:idx_auction_item_member,unique" json:"auction_item_id"`
 	MemberID      uint         `gorm:"not null;index:idx_auction_item_member,unique" json:"member_id"`
+	Quantity      int          `gorm:"not null;default:1" json:"quantity"`
 	SubmittedAt   time.Time    `gorm:"autoCreateTime;index" json:"submitted_at"`
 	AuctionItem   *AuctionItem `gorm:"foreignKey:AuctionItemID;constraint:OnDelete:CASCADE" json:"auction_item,omitempty"`
 	Member        *GuildMember `gorm:"foreignKey:MemberID;constraint:OnDelete:CASCADE" json:"member,omitempty"`
