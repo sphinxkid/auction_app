@@ -61,10 +61,11 @@ func (s *AllocationService) ResolveAuctionItem(auctionItemID uint) (*ItemResolut
 			return ErrAuctionItemResolved
 		}
 
-		quantity := auctionItem.Quantity
-		if quantity < 0 {
-			quantity = 0
+		if auctionItem.Quantity <= 0 {
+			return fmt.Errorf("cannot resolve item auction when current drop quantity is 0")
 		}
+
+		quantity := auctionItem.Quantity
 
 		itemID := auctionItem.ItemID
 		auctionID := auctionItem.AuctionID

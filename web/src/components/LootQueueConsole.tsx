@@ -31,7 +31,8 @@ import {
   Calendar,
   Zap,
   Tag,
-  Palette
+  Palette,
+  AlertTriangle
 } from 'lucide-react';
 
 interface GuildClass {
@@ -82,6 +83,7 @@ interface Auction {
   title: string;
   status: 'ACTIVE' | 'RESOLVED';
   auction_date: string;
+  created_ts?: string;
   auction_items: AuctionItem[];
 }
 
@@ -244,7 +246,7 @@ export const LootQueueConsole: React.FC = () => {
   const [activeAuction, setActiveAuction] = useState<Auction | null>(null);
 
   // Create Auction Form state & Scheduled Date Picker
-  const [newTitle, setNewTitle] = useState('Raid Night - Molten Core');
+  const [newTitle, setNewTitle] = useState('');
   const [newAuctionDate, setNewAuctionDate] = useState<string>('');
   
   // Searchable Item Selection for Draft Auction & Edit Auction
@@ -526,7 +528,17 @@ export const LootQueueConsole: React.FC = () => {
   const handleCreateAuction = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTitle.trim()) {
-      showMsg('error', 'Auction title is required.');
+      showMsg('error', 'Raid Auction Title text box cannot be empty upon creation.');
+      return;
+    }
+
+    if (!newAuctionDate.trim()) {
+      showMsg('error', 'Scheduled Auction Date cannot be empty upon creation.');
+      return;
+    }
+
+    if (activeAuction && activeAuction.status === 'ACTIVE') {
+      showMsg('error', 'Cannot create a new auction while an active auction is running. Please finalize the current active auction first.');
       return;
     }
 
@@ -777,6 +789,12 @@ export const LootQueueConsole: React.FC = () => {
 
   // Resolve Auction Item & Calculate Rank Movements
   const handleResolveItem = async (auctionItemId: number, itemId: number) => {
+    const targetAuctionItem = activeAuction?.auction_items?.find((ai) => ai.id === auctionItemId);
+    if (targetAuctionItem && targetAuctionItem.quantity <= 0) {
+      showMsg('error', 'Cannot resolve item auction when current drop quantity is 0. Please set a drop quantity > 0 in Step 3 first.');
+      return;
+    }
+
     setLoading(true);
     try {
       // 1. Capture current rankings before resolution
@@ -1337,19 +1355,23 @@ export const LootQueueConsole: React.FC = () => {
                                   <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-700 text-amber-400">
                                     <Package className="w-5 h-5" />
                                   </div>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <h4 className="font-bold text-slate-100 text-sm">{ai.item?.name}</h4>
+                                    <span className="text-xs font-black text-amber-300 bg-amber-500/20 px-2.5 py-0.5 rounded-lg border border-amber-500/40 shadow-sm flex items-center gap-1">
+                                      <span className="text-[10px] font-extrabold uppercase text-amber-400/80">Current drop:</span>
+                                      {ai.quantity}
+                                    </span>
+                                    <span
+                                      className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                                        isResolved
+                                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                          : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                      }`}
+                                    >
+                                      {ai.status}
+                                    </span>
+                                  </div>
                                   <div>
-                                    <div className="flex items-center gap-2">
-                                      <h5 className="font-bold text-slate-100 text-sm">{ai.item?.name}</h5>
-                                      <span
-                                        className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                                          isResolved
-                                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                                            : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                                        }`}
-                                      >
-                                        {ai.status}
-                                      </span>
-                                    </div>
                                     <p className="text-xs text-slate-400 mt-0.5">{ai.item?.description}</p>
                                   </div>
                                 </div>
@@ -1657,8 +1679,14 @@ export const LootQueueConsole: React.FC = () => {
                                   <Package className="w-5 h-5" />
                                 </div>
                                 <div>
-                                  <h4 className="font-bold text-slate-100 text-sm">{ai.item?.name}</h4>
-                                  <p className="text-xs text-slate-400">{ai.item?.description}</p>
+                                  <div className="flex items-center gap-2.5 flex-wrap">
+                                    <h4 className="font-bold text-slate-100 text-sm">{ai.item?.name}</h4>
+                                    <span className="text-xs font-black text-amber-300 bg-amber-500/20 px-2.5 py-0.5 rounded-lg border border-amber-500/40 shadow-sm flex items-center gap-1">
+                                      <span className="text-[10px] font-extrabold uppercase text-amber-400/80">Current drop:</span>
+                                      {ai.quantity}
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-slate-400 mt-0.5">{ai.item?.description}</p>
                                 </div>
                               </div>
 
@@ -1724,8 +1752,12 @@ export const LootQueueConsole: React.FC = () => {
                             >
                               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                                 <div>
-                                  <div className="flex items-center gap-2">
+                                  <div className="flex items-center gap-2.5 flex-wrap">
                                     <h4 className="font-bold text-slate-100 text-sm">{ai.item?.name}</h4>
+                                    <span className="text-xs font-black text-amber-300 bg-amber-500/20 px-2.5 py-0.5 rounded-lg border border-amber-500/40 shadow-sm flex items-center gap-1">
+                                      <span className="text-[10px] font-extrabold uppercase text-amber-400/80">Current drop:</span>
+                                      {ai.quantity}
+                                    </span>
                                     <span
                                       className={`text-[10px] font-bold px-2 py-0.5 rounded ${
                                         isResolved
@@ -1737,19 +1769,30 @@ export const LootQueueConsole: React.FC = () => {
                                     </span>
                                   </div>
                                   <p className="text-xs text-slate-400 mt-0.5">
-                                    Quantity Dropped: <strong className="text-amber-400">{ai.quantity}</strong> | Candidate Intents: <strong className="text-purple-300">{intentsCount}</strong>
+                                    Candidate Intents: <strong className="text-purple-300">{intentsCount}</strong>
                                   </p>
                                 </div>
 
                                 {!isResolved ? (
-                                  <button
-                                    onClick={() => handleResolveItem(ai.id, ai.item_id)}
-                                    disabled={loading}
-                                    className="px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20"
-                                  >
-                                    <Play className="w-4 h-4" />
-                                    Execute Resolution
-                                  </button>
+                                  <div className="flex flex-col items-end gap-1">
+                                    <button
+                                      onClick={() => handleResolveItem(ai.id, ai.item_id)}
+                                      disabled={loading || ai.quantity <= 0}
+                                      className={`px-5 py-2.5 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all ${
+                                        ai.quantity <= 0
+                                          ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700 opacity-60 shadow-none'
+                                          : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-lg shadow-emerald-600/20'
+                                      }`}
+                                    >
+                                      <Play className="w-4 h-4" />
+                                      Execute Resolution
+                                    </button>
+                                    {ai.quantity <= 0 && (
+                                      <span className="text-[10px] text-amber-400 font-bold">
+                                        Drop qty is 0. Set drop qty &gt; 0 in Step 3 to resolve.
+                                      </span>
+                                    )}
+                                  </div>
                                 ) : (
                                   <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
                                     <CheckCircle2 className="w-4 h-4 text-emerald-400" />
@@ -2034,43 +2077,87 @@ export const LootQueueConsole: React.FC = () => {
                 </p>
               </div>
 
+              {activeAuction && activeAuction.status === 'ACTIVE' && (
+                <div className="p-4 bg-amber-500/10 rounded-xl border border-amber-500/30 text-amber-300 text-xs space-y-1.5 shadow-md">
+                  <div className="flex items-center gap-2 font-black uppercase text-amber-400">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                    Active Auction Currently Running!
+                  </div>
+                  <p className="leading-relaxed">
+                    An active raid auction (<strong className="text-amber-200">{activeAuction.title}</strong>) is currently in progress. You must finalize the active auction before creating a new one.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuctionSubView('active');
+                      setActiveAuctionSubPage('finalize');
+                    }}
+                    className="mt-1 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-lg text-xs inline-flex items-center gap-1.5 transition-all shadow-md"
+                  >
+                    Go to Finalize Active Auction
+                  </button>
+                </div>
+              )}
+
               <form onSubmit={handleCreateAuction} className="space-y-6">
+                {/* Required Fields Notice */}
+                <div className="p-3 bg-purple-500/10 rounded-xl border border-purple-500/20 text-xs text-purple-300 flex items-center justify-between shadow-sm">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-purple-400 shrink-0" />
+                    <span>Please fill in all highlighted fields (<strong className="text-rose-400">* Required</strong>) before launching the raid auction.</span>
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {/* Auction Title Input */}
                   <div className="space-y-1.5">
-                    <label className="text-xs font-bold uppercase tracking-wider text-slate-300 block">
-                      Raid Auction Title:
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center justify-between">
+                      <span>Raid Auction Title:</span>
+                      <span className="text-[10px] font-extrabold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20 uppercase tracking-widest">* Required</span>
                     </label>
                     <input
                       type="text"
                       value={newTitle}
                       onChange={(e) => setNewTitle(e.target.value)}
                       placeholder="e.g. Molten Core - Raid Night #4"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-purple-500"
-                      required
+                      className={`w-full bg-slate-950 border rounded-xl px-4 py-2.5 text-xs text-slate-100 focus:outline-none transition-all ${
+                        !newTitle.trim()
+                          ? 'border-rose-500/60 ring-1 ring-rose-500/30 shadow-sm shadow-rose-500/10 focus:border-rose-400'
+                          : 'border-emerald-500/60 ring-1 ring-emerald-500/20 focus:border-emerald-400'
+                      }`}
                     />
                   </div>
 
                   {/* Scheduled Auction Date Picker */}
                   <div className="space-y-1.5">
-                    <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5 block">
-                      <Calendar className="w-3.5 h-3.5 text-purple-400" />
-                      Scheduled Auction Date:
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Calendar className="w-3.5 h-3.5 text-purple-400" />
+                        Scheduled Auction Date:
+                      </span>
+                      <span className="text-[10px] font-extrabold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20 uppercase tracking-widest">* Required</span>
                     </label>
                     <input
                       type="date"
                       value={newAuctionDate}
                       onChange={(e) => setNewAuctionDate(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 text-xs text-slate-100 focus:outline-none focus:border-purple-500"
+                      className={`w-full bg-slate-950 border rounded-xl px-4 py-2 text-xs text-slate-100 focus:outline-none transition-all ${
+                        !newAuctionDate.trim()
+                          ? 'border-rose-500/60 ring-1 ring-rose-500/30 shadow-sm shadow-rose-500/10 focus:border-rose-400'
+                          : 'border-emerald-500/60 ring-1 ring-emerald-500/20 focus:border-emerald-400'
+                      }`}
                     />
                   </div>
                 </div>
 
                 {/* Catalog Item Picker */}
                 <div className="space-y-3 p-4 bg-slate-950/60 rounded-xl border border-slate-800">
-                  <h4 className="text-xs font-extrabold uppercase tracking-wider text-purple-300 flex items-center gap-1.5">
-                    <Search className="w-3.5 h-3.5 text-purple-400" />
-                    Select Raid Item from Catalog:
+                  <h4 className="text-xs font-extrabold uppercase tracking-wider text-purple-300 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Search className="w-3.5 h-3.5 text-purple-400" />
+                      Select Raid Item from Catalog:
+                    </span>
+                    <span className="text-[10px] font-extrabold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20 uppercase tracking-widest">* Min 1 Item Required</span>
                   </h4>
 
                   <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
@@ -2112,8 +2199,17 @@ export const LootQueueConsole: React.FC = () => {
 
                 {/* Staged Draft Items Table */}
                 <div className="space-y-3">
-                  <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
-                    Staged Auction Items ({draftAuctionItems.length}):
+                  <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-400 flex items-center justify-between">
+                    <span className="flex items-center gap-2">
+                      Staged Auction Items ({draftAuctionItems.length}):
+                      <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded border uppercase tracking-widest ${
+                        draftAuctionItems.length === 0
+                          ? 'text-rose-400 bg-rose-500/10 border-rose-500/20'
+                          : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+                      }`}>
+                        {draftAuctionItems.length === 0 ? '* Required (0/1 Item Added)' : '✓ Validated'}
+                      </span>
+                    </span>
                   </h4>
 
                   {draftAuctionItems.length > 0 ? (

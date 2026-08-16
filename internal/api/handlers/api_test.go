@@ -127,7 +127,8 @@ func TestAPI_Step3EndpointsWorkflow(t *testing.T) {
 
 	// 3. Test POST /api/v1/auctions (Create auction with 2 items)
 	createReq := handlers.CreateAuctionRequest{
-		Title: "Molten Core - Raid Night",
+		Title:       "Molten Core - Raid Night",
+		AuctionDate: "2026-08-16",
 		Items: []handlers.CreateAuctionItemRequest{
 			{ItemID: items[0].ID, Quantity: 2}, // Primordial Essence Qty 2
 			{ItemID: items[1].ID, Quantity: 1}, // Dragon Scale Qty 1

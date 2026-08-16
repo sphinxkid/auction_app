@@ -169,28 +169,40 @@ func TestAllocationEngine_ZeroQuantityResolution(t *testing.T) {
 	auction := models.Auction{Title: "Zero Qty Raid", Status: models.AuctionStatusActive, AuctionDate: time.Now().UTC()}
 	_ = db.Create(&auction)
 
-	auctionItem := models.AuctionItem{
+	// 1. Verify resolving with Quantity = 0 returns error
+	auctionItemZero := models.AuctionItem{
 		AuctionID: auction.ID,
 		ItemID:    item.ID,
 		Quantity:  0, // Zero Quantity
 		Status:    models.AuctionItemStatusPending,
 	}
-	_ = db.Create(&auctionItem)
+	_ = db.Create(&auctionItemZero)
 
 	service := services.NewAllocationService(db)
-	res, err := service.ResolveAuctionItem(auctionItem.ID)
+	_, err = service.ResolveAuctionItem(auctionItemZero.ID)
+	if err == nil {
+		t.Fatalf("Expected ResolveAuctionItem to fail for 0 qty, but it succeeded")
+	}
+
+	// 2. Verify resolving with Quantity = 1 and 0 candidates succeeds with 0 allocations
+	auctionItemNoCandidates := models.AuctionItem{
+		AuctionID: auction.ID,
+		ItemID:    item.ID,
+		Quantity:  1,
+		Status:    models.AuctionItemStatusPending,
+	}
+	_ = db.Create(&auctionItemNoCandidates)
+
+	res, err := service.ResolveAuctionItem(auctionItemNoCandidates.ID)
 	if err != nil {
-		t.Fatalf("ResolveAuctionItem failed for 0 qty: %v", err)
+		t.Fatalf("ResolveAuctionItem failed for 0 candidates: %v", err)
 	}
 
 	if res.AllocatedQuantity != 0 {
-		t.Errorf("Expected 0 allocated quantity, got %d", res.AllocatedQuantity)
+		t.Errorf("Expected 0 allocated quantity for 0 candidates, got %d", res.AllocatedQuantity)
 	}
 	if res.AuctionItemStatus != models.AuctionItemStatusResolved {
 		t.Errorf("Expected item status RESOLVED, got %s", res.AuctionItemStatus)
-	}
-	if !res.IsAuctionFullyResolved {
-		t.Errorf("Expected parent auction to be fully resolved")
 	}
 }
 

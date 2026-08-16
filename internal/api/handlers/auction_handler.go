@@ -197,20 +197,37 @@ func CreateAuctionHandler(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
+		// Check if an ACTIVE auction already exists
+		var existingActiveCount int64
+		if err := db.Model(&models.Auction{}).Where("status = ?", models.AuctionStatusActive).Count(&existingActiveCount).Error; err != nil {
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
+		if existingActiveCount > 0 {
+			http.Error(w, `{"error":"an active auction is already running. Please finalize it before creating a new auction"}`, http.StatusConflict)
+			return
+		}
+
 		if len(req.Items) == 0 {
 			http.Error(w, `{"error":"at least one auction item is required"}`, http.StatusBadRequest)
 			return
 		}
 
-		auctionDate := time.Now().UTC()
-		if req.AuctionDate != "" {
-			if parsed, err := time.Parse(time.RFC3339, req.AuctionDate); err == nil {
-				auctionDate = parsed
-			} else if parsedDate, err := time.Parse("2006-01-02T15:04", req.AuctionDate); err == nil {
-				auctionDate = parsedDate
-			} else if parsedDateOnly, err := time.Parse("2006-01-02", req.AuctionDate); err == nil {
-				auctionDate = parsedDateOnly
-			}
+		if req.AuctionDate == "" {
+			http.Error(w, `{"error":"auction_date is required"}`, http.StatusBadRequest)
+			return
+		}
+
+		var auctionDate time.Time
+		if parsed, err := time.Parse(time.RFC3339, req.AuctionDate); err == nil {
+			auctionDate = parsed
+		} else if parsedDate, err := time.Parse("2006-01-02T15:04", req.AuctionDate); err == nil {
+			auctionDate = parsedDate
+		} else if parsedDateOnly, err := time.Parse("2006-01-02", req.AuctionDate); err == nil {
+			auctionDate = parsedDateOnly
+		} else {
+			http.Error(w, `{"error":"invalid auction_date format"}`, http.StatusBadRequest)
+			return
 		}
 
 		var createdAuction models.Auction
@@ -219,6 +236,7 @@ func CreateAuctionHandler(db *gorm.DB) http.HandlerFunc {
 				Title:       req.Title,
 				Status:      models.AuctionStatusActive,
 				AuctionDate: auctionDate,
+				CreatedTS:   time.Now().UTC(),
 			}
 
 			if err := tx.Create(&auction).Error; err != nil {

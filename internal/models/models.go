@@ -56,6 +56,7 @@ type Auction struct {
 	Title        string        `gorm:"type:varchar(200);not null" json:"title"`
 	Status       string        `gorm:"type:varchar(20);default:'ACTIVE';not null;index" json:"status"` // DRAFT, ACTIVE, RESOLVED
 	AuctionDate  time.Time     `gorm:"not null;index" json:"auction_date"`
+	CreatedTS    time.Time     `gorm:"autoCreateTime;index" json:"created_ts"`
 	AuctionItems []AuctionItem `gorm:"foreignKey:AuctionID;constraint:OnDelete:CASCADE" json:"auction_items,omitempty"`
 }
 
@@ -64,7 +65,7 @@ type AuctionItem struct {
 	ID         uint          `gorm:"primaryKey;autoIncrement" json:"id"`
 	AuctionID  uint          `gorm:"not null;index" json:"auction_id"`
 	ItemID     uint          `gorm:"not null;index" json:"item_id"`
-	Quantity   int           `gorm:"not null;default:1" json:"quantity"`
+	Quantity   int           `gorm:"not null;default:0" json:"quantity"`
 	Status     string        `gorm:"type:varchar(20);default:'PENDING';not null;index" json:"status"` // PENDING, RESOLVED
 	ResolvedAt *time.Time    `gorm:"index" json:"resolved_at,omitempty"`
 	Auction    *Auction      `gorm:"foreignKey:AuctionID;constraint:OnDelete:CASCADE" json:"auction,omitempty"`
