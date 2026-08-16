@@ -26,13 +26,26 @@ import {
   X,
   PlusCircle,
   ChevronRight,
-  Package
+  Package,
+  Calendar,
+  Zap,
+  Tag,
+  Palette
 } from 'lucide-react';
+
+interface GuildClass {
+  id: number;
+  name: string;
+  color?: string;
+}
 
 interface Member {
   id: number;
   name: string;
   discord_id: string;
+  class_id?: number;
+  class?: GuildClass;
+  gvg_build?: string;
   created_at: string;
 }
 
@@ -80,6 +93,7 @@ interface QueueRanking {
   updated_at: string;
   member_name?: string;
   discord_id?: string;
+  member?: Member;
 }
 
 interface AllocationHistoryItem {
@@ -91,6 +105,7 @@ interface AllocationHistoryItem {
   member_id: number;
   member_name: string;
   discord_id: string;
+  member_class?: GuildClass;
   allocated_quantity: number;
   allocated_at: string;
 }
@@ -117,13 +132,15 @@ interface ItemRankHistoryItem {
   member_id: number;
   member_name: string;
   discord_id: string;
+  member_class?: GuildClass;
   rank: number;
   status: string;
   recorded_at: string;
 }
 
 type MainPage = 'auctions' | 'members' | 'items';
-type AuctionSubView = 'active' | 'create' | 'queue';
+type AuctionSubView = 'active' | 'create';
+type MemberSubView = 'roster' | 'add_member' | 'add_class';
 
 interface DraftAuctionItem {
   item_id: number;
@@ -131,17 +148,34 @@ interface DraftAuctionItem {
   quantity: number;
 }
 
+// Preset Swatch Colors for Guild Classes
+const COLOR_PRESETS = [
+  { name: 'Warrior Tan', hex: '#C79C6E' },
+  { name: 'Paladin Pink', hex: '#F58CBA' },
+  { name: 'Hunter Green', hex: '#ABD473' },
+  { name: 'Rogue Yellow', hex: '#FFF569' },
+  { name: 'Priest White', hex: '#FFFFFF' },
+  { name: 'Shaman Blue', hex: '#0070DE' },
+  { name: 'Mage Light Blue', hex: '#69CCF0' },
+  { name: 'Warlock Purple', hex: '#9482C9' },
+  { name: 'Druid Orange', hex: '#FF7D0A' },
+  { name: 'Emerald Teal', hex: '#10B981' },
+];
+
 export const LootQueueConsole: React.FC = () => {
   // Navigation Page & SubView State
   const [activePage, setActivePage] = useState<MainPage>('auctions');
   const [auctionSubView, setAuctionSubView] = useState<AuctionSubView>('active');
+  const [memberSubView, setMemberSubView] = useState<MemberSubView>('roster');
 
+  const [classes, setClasses] = useState<GuildClass[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [activeAuction, setActiveAuction] = useState<Auction | null>(null);
 
-  // Create Auction Form state
+  // Create Auction Form state & Scheduled Date Picker
   const [newTitle, setNewTitle] = useState('Raid Night - Molten Core');
+  const [newAuctionDate, setNewAuctionDate] = useState<string>('');
   
   // Searchable Item Selection for Draft Auction
   const [itemSearchQuery, setItemSearchQuery] = useState('');
@@ -173,11 +207,17 @@ export const LootQueueConsole: React.FC = () => {
   const [lastResolutionResult, setLastResolutionResult] = useState<ItemResolutionResult | null>(null);
   const [previousRankingsMap, setPreviousRankingsMap] = useState<{ [memberId: number]: number }>({});
 
-  // Member List Page State
+  // Member Page Section Forms
   const [memberRosterSearchQuery, setMemberRosterSearchQuery] = useState('');
-  const [showAddMemberModal, setShowAddMemberModal] = useState(false);
+
   const [newMemberName, setNewMemberName] = useState('');
   const [newMemberDiscord, setNewMemberDiscord] = useState('');
+  const [selectedMemberClassId, setSelectedMemberClassId] = useState<number | ''>('');
+  const [memberGvGBuild, setMemberGvGBuild] = useState<string>('');
+
+  const [newClassName, setNewClassName] = useState('');
+  const [newClassColor, setNewClassColor] = useState('#A855F7');
+
   const [selectedDetailMember, setSelectedDetailMember] = useState<Member | null>(null);
   const [selectedDetailMemberHistory, setSelectedDetailMemberHistory] = useState<AllocationHistoryItem[]>([]);
 
@@ -187,12 +227,17 @@ export const LootQueueConsole: React.FC = () => {
 
   const fetchInitialData = async () => {
     try {
-      const [membersRes, itemsRes, activeAuctionRes] = await Promise.all([
+      const [classesRes, membersRes, itemsRes, activeAuctionRes] = await Promise.all([
+        fetch('/api/v1/classes'),
         fetch('/api/v1/members'),
         fetch('/api/v1/items'),
         fetch('/api/v1/auctions/active'),
       ]);
 
+      if (classesRes.ok) {
+        const fetchedClasses: GuildClass[] = await classesRes.json();
+        setClasses(fetchedClasses);
+      }
       if (membersRes.ok) {
         const fetchedMembers: Member[] = await membersRes.json();
         setMembers(fetchedMembers);
@@ -268,6 +313,25 @@ export const LootQueueConsole: React.FC = () => {
     setTimeout(() => setMessage(null), 5000);
   };
 
+  // Helper Function: Enclose Member Name in Class Color Badge (No separate class text)
+  const renderMemberBadge = (name: string, guildClass?: GuildClass, extraSuffix?: React.ReactNode) => {
+    const color = guildClass?.color || '#A855F7';
+    return (
+      <span
+        className="px-2.5 py-0.5 rounded-lg text-xs font-extrabold border inline-flex items-center gap-1.5 shadow-sm shrink-0"
+        style={{
+          backgroundColor: `${color}25`,
+          borderColor: `${color}60`,
+          color: color === '#FFFFFF' ? '#F8FAFC' : color,
+        }}
+      >
+        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
+        {name}
+        {extraSuffix}
+      </span>
+    );
+  };
+
   // Add Item to Draft Auction List
   const handleAddDraftItem = () => {
     if (!selectedCatalogItemId) return;
@@ -325,6 +389,7 @@ export const LootQueueConsole: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: newTitle.trim(),
+          auction_date: newAuctionDate ? newAuctionDate : undefined,
           items: draftAuctionItems.map((di) => ({
             item_id: di.item_id,
             quantity: di.quantity,
@@ -347,9 +412,46 @@ export const LootQueueConsole: React.FC = () => {
       }
 
       setDraftAuctionItems([]);
+      setNewAuctionDate('');
       setAuctionSubView('active');
     } catch (err: any) {
       showMsg('error', err.message || 'Failed to launch auction');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Create New Guild Class Handler (with Color picker support)
+  const handleCreateClass = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newClassName.trim()) {
+      showMsg('error', 'Class Name is required.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch('/api/v1/classes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newClassName.trim(),
+          color: newClassColor,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to create class');
+      }
+
+      const createdClass: GuildClass = await res.json();
+      setClasses((prev) => [...prev, createdClass]);
+      setSelectedMemberClassId(createdClass.id);
+      showMsg('success', `Created new guild class "${createdClass.name}" with custom color!`);
+      setNewClassName('');
+      setMemberSubView('roster');
+    } catch (err: any) {
+      showMsg('error', err.message || 'Failed to create class');
     } finally {
       setLoading(false);
     }
@@ -526,6 +628,8 @@ export const LootQueueConsole: React.FC = () => {
         body: JSON.stringify({
           name: newMemberName.trim(),
           discord_id: newMemberDiscord.trim(),
+          class_id: selectedMemberClassId ? Number(selectedMemberClassId) : undefined,
+          gvg_build: memberGvGBuild.trim(),
         }),
       });
 
@@ -539,7 +643,9 @@ export const LootQueueConsole: React.FC = () => {
       showMsg('success', `Added new guild member ${createdMem.name}!`);
       setNewMemberName('');
       setNewMemberDiscord('');
-      setShowAddMemberModal(false);
+      setSelectedMemberClassId('');
+      setMemberGvGBuild('');
+      setMemberSubView('roster');
     } catch (err: any) {
       showMsg('error', err.message || 'Failed to add member');
     } finally {
@@ -585,7 +691,7 @@ export const LootQueueConsole: React.FC = () => {
       );
     }
 
-    const rankDiff = prevRank - currentRank; // Positive means moved up in rank (e.g. 3 -> 1 is +2)
+    const rankDiff = prevRank - currentRank;
 
     if (rankDiff > 0) {
       return (
@@ -619,14 +725,18 @@ export const LootQueueConsole: React.FC = () => {
   const filteredMembers = members.filter(
     (m) =>
       m.name.toLowerCase().includes(memberSearchQuery.toLowerCase()) ||
-      m.discord_id.toLowerCase().includes(memberSearchQuery.toLowerCase())
+      m.discord_id.toLowerCase().includes(memberSearchQuery.toLowerCase()) ||
+      (m.class?.name && m.class.name.toLowerCase().includes(memberSearchQuery.toLowerCase())) ||
+      (m.gvg_build && m.gvg_build.toLowerCase().includes(memberSearchQuery.toLowerCase()))
   );
 
   // Filter Members for Member List Page
   const filteredRosterMembers = members.filter(
     (m) =>
       m.name.toLowerCase().includes(memberRosterSearchQuery.toLowerCase()) ||
-      m.discord_id.toLowerCase().includes(memberRosterSearchQuery.toLowerCase())
+      m.discord_id.toLowerCase().includes(memberRosterSearchQuery.toLowerCase()) ||
+      (m.class?.name && m.class.name.toLowerCase().includes(memberRosterSearchQuery.toLowerCase())) ||
+      (m.gvg_build && m.gvg_build.toLowerCase().includes(memberRosterSearchQuery.toLowerCase()))
   );
 
   const currentSelectedAuctionItem = activeAuction?.auction_items?.find((ai) => ai.id === selectedAuctionItemId);
@@ -756,7 +866,7 @@ export const LootQueueConsole: React.FC = () => {
                   Raid Auction Hub
                 </h2>
                 <p className="text-xs text-slate-400">
-                  Select an option below to manage active raid drops, create a new auction, or inspect queue ranks.
+                  Select an option below to manage active raid drops or launch a new auction.
                 </p>
               </div>
             </div>
@@ -789,18 +899,6 @@ export const LootQueueConsole: React.FC = () => {
                 <PlusCircle className="w-3.5 h-3.5" />
                 Create New Auction
               </button>
-
-              <button
-                onClick={() => setAuctionSubView('queue')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-extrabold transition-all ${
-                  auctionSubView === 'queue'
-                    ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
-                }`}
-              >
-                <ListChecks className="w-3.5 h-3.5" />
-                Priority Queue & History
-              </button>
             </div>
           </div>
 
@@ -818,8 +916,9 @@ export const LootQueueConsole: React.FC = () => {
                             Active Raid Auction
                           </span>
                           <h3 className="text-lg font-black text-slate-100 mt-1">{activeAuction.title}</h3>
-                          <p className="text-xs text-slate-400">
-                            Launched {new Date(activeAuction.auction_date).toLocaleString()}
+                          <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
+                            <Calendar className="w-3.5 h-3.5 text-purple-400" />
+                            Scheduled Date: {new Date(activeAuction.auction_date).toLocaleDateString()}
                           </p>
                         </div>
                       </div>
@@ -906,6 +1005,20 @@ export const LootQueueConsole: React.FC = () => {
                                   </div>
                                 </div>
                               </div>
+
+                              {/* Candidate Intents Registered List */}
+                              {ai.intents && ai.intents.length > 0 && (
+                                <div className="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center gap-2 flex-wrap">
+                                  <span className="text-[10px] font-extrabold uppercase text-slate-400">
+                                    Registered Candidates:
+                                  </span>
+                                  {ai.intents.map((intent) => (
+                                    <React.Fragment key={intent.id}>
+                                      {renderMemberBadge(intent.member?.name || `Member #${intent.member_id}`, intent.member?.class)}
+                                    </React.Fragment>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           );
                         })}
@@ -940,7 +1053,7 @@ export const LootQueueConsole: React.FC = () => {
                               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
                               <input
                                 type="text"
-                                placeholder="Search member name or discord..."
+                                placeholder="Search member name, class, or discord..."
                                 value={memberSearchQuery}
                                 onChange={(e) => setMemberSearchQuery(e.target.value)}
                                 className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-purple-500"
@@ -1058,24 +1171,40 @@ export const LootQueueConsole: React.FC = () => {
                   Create New Raid Auction
                 </h3>
                 <p className="text-xs text-slate-400">
-                  Select loot items from the catalog and specify initial drop quantities.
+                  Specify auction title, scheduled date, select loot items from catalog, and set initial drop quantities.
                 </p>
               </div>
 
               <form onSubmit={handleCreateAuction} className="space-y-6">
-                {/* Auction Title Input */}
-                <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-300 block">
-                    Raid Auction Title:
-                  </label>
-                  <input
-                    type="text"
-                    value={newTitle}
-                    onChange={(e) => setNewTitle(e.target.value)}
-                    placeholder="e.g. Molten Core - Raid Night #4"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-purple-500"
-                    required
-                  />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Auction Title Input */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-300 block">
+                      Raid Auction Title:
+                    </label>
+                    <input
+                      type="text"
+                      value={newTitle}
+                      onChange={(e) => setNewTitle(e.target.value)}
+                      placeholder="e.g. Molten Core - Raid Night #4"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-purple-500"
+                      required
+                    />
+                  </div>
+
+                  {/* Scheduled Auction Date Picker */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5 block">
+                      <Calendar className="w-3.5 h-3.5 text-purple-400" />
+                      Scheduled Auction Date:
+                    </label>
+                    <input
+                      type="date"
+                      value={newAuctionDate}
+                      onChange={(e) => setNewAuctionDate(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 text-xs text-slate-100 focus:outline-none focus:border-purple-500"
+                    />
+                  </div>
                 </div>
 
                 {/* Catalog Item Picker */}
@@ -1208,251 +1337,401 @@ export const LootQueueConsole: React.FC = () => {
               </form>
             </div>
           )}
-
-          {/* 3. PRIORITY QUEUE & RANK HISTORY SUB-VIEW */}
-          {auctionSubView === 'queue' && (
-            <div className="space-y-6">
-              {/* Item Selector Pills */}
-              <div className="bg-slate-900/60 rounded-2xl border border-slate-800 p-4 space-y-3">
-                <span className="text-xs font-extrabold uppercase tracking-wider text-slate-400 block">
-                  Select Item to Inspect Priority Queue & Rank History:
-                </span>
-                <div className="flex flex-wrap gap-2">
-                  {items.map((item) => (
-                    <button
-                      key={item.id}
-                      onClick={() => setSelectedQueueItemId(item.id)}
-                      className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                        selectedQueueItemId === item.id
-                          ? 'bg-purple-600 text-white shadow-md'
-                          : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
-                      }`}
-                    >
-                      {item.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Priority Queue Table */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                <div className="lg:col-span-7 space-y-3">
-                  <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-                    <ListChecks className="w-4 h-4 text-purple-400" />
-                    Priority Queue Rankings (1..M)
-                  </h3>
-
-                  <div className="bg-slate-900/60 rounded-xl border border-slate-800 overflow-hidden">
-                    <table className="w-full text-left border-collapse text-xs">
-                      <thead>
-                        <tr className="bg-slate-900 border-b border-slate-800 text-slate-400 font-semibold uppercase">
-                          <th className="py-3 px-4">Rank</th>
-                          <th className="py-3 px-4">Guild Member</th>
-                          <th className="py-3 px-4">Status</th>
-                          <th className="py-3 px-4">Rank Movement</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                        {queueRankings.length > 0 ? (
-                          queueRankings.map((r) => {
-                            const isWinner = historyItems.some((h) => h.member_id === r.member_id && h.item_id === r.item_id);
-                            return (
-                              <tr key={r.id} className="hover:bg-slate-800/40 transition-colors">
-                                <td className="py-3 px-4 font-extrabold text-amber-400">#{r.rank}</td>
-                                <td className="py-3 px-4">
-                                  <span className="font-semibold text-slate-100 block">{r.member_name}</span>
-                                  <span className="text-[10px] text-slate-500 font-mono">{r.discord_id}</span>
-                                </td>
-                                <td className="py-3 px-4">
-                                  <span
-                                    className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                      r.status === 'WAITING'
-                                        ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
-                                        : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                                    }`}
-                                  >
-                                    {r.status}
-                                  </span>
-                                </td>
-                                <td className="py-3 px-4">
-                                  {renderRankMovementBadge(r.member_id, r.rank, isWinner && r.status === 'PAST_WINNER')}
-                                </td>
-                              </tr>
-                            );
-                          })
-                        ) : (
-                          <tr>
-                            <td colSpan={4} className="py-6 text-center text-slate-500">
-                              No active queue rankings recorded for this item yet.
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                {/* Allocation Audit Winner History */}
-                <div className="lg:col-span-5 space-y-3">
-                  <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-                    <History className="w-4 h-4 text-indigo-400" />
-                    Allocation Winner History
-                  </h3>
-
-                  <div className="bg-slate-900/60 rounded-xl border border-slate-800 overflow-hidden">
-                    <table className="w-full text-left border-collapse text-xs">
-                      <thead>
-                        <tr className="bg-slate-900 border-b border-slate-800 text-slate-400 font-semibold uppercase">
-                          <th className="py-3 px-4">Winner</th>
-                          <th className="py-3 px-4">Auction</th>
-                          <th className="py-3 px-4">Allocated At</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                        {historyItems.length > 0 ? (
-                          historyItems.map((h) => (
-                            <tr key={h.id} className="hover:bg-slate-800/40 transition-colors">
-                              <td className="py-3 px-4 font-semibold text-amber-300 flex items-center gap-1.5">
-                                <Trophy className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                                {h.member_name}
-                              </td>
-                              <td className="py-3 px-4 text-slate-400 truncate max-w-[120px]">{h.auction_title}</td>
-                              <td className="py-3 px-4 text-slate-400 font-mono text-[11px]">
-                                {new Date(h.allocated_at).toLocaleTimeString()}
-                              </td>
-                            </tr>
-                          ))
-                        ) : (
-                          <tr>
-                            <td colSpan={3} className="py-6 text-center text-slate-500">
-                              No resolved allocations for this item yet.
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
         </main>
       )}
 
-      {/* PAGE 2: MEMBER LIST PAGE */}
+      {/* PAGE 2: MEMBER LIST PAGE (3 DISTINCT SUB-PAGES: Member List, Add Member, Add Class) */}
       {activePage === 'members' && (
         <main className="max-w-7xl mx-auto px-4 md:px-8 mt-6 space-y-6">
-          {/* Member List Header & Search Bar */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-900/60 p-4 rounded-2xl border border-slate-800">
+          {/* Sub-view Navigation Bar for Member Management Page */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-slate-900/60 p-4 rounded-2xl border border-slate-800">
             <div className="flex items-center gap-3">
               <Users className="w-5 h-5 text-purple-400 shrink-0" />
               <div>
                 <h2 className="text-sm font-extrabold text-slate-100 uppercase tracking-wider">
-                  Guild Roster Directory ({members.length})
+                  Guild Roster & Class Management Hub ({members.length})
                 </h2>
                 <p className="text-xs text-slate-400">
-                  Manage guild members, view won items history, and inspect queue standings.
+                  Select a sub-page below to view member roster, add a new guild member, or create a character class.
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
-              {/* Search Member Filter */}
-              <div className="relative">
-                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
-                <input
-                  type="text"
-                  placeholder="Search member name or discord tag..."
-                  value={memberRosterSearchQuery}
-                  onChange={(e) => setMemberRosterSearchQuery(e.target.value)}
-                  className="bg-slate-950 border border-slate-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-purple-500 w-56 md:w-64"
-                />
-              </div>
-
-              {/* Add Member Trigger Button */}
+            {/* 3 Sub-View Navigation Buttons */}
+            <div className="flex flex-wrap items-center gap-2 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
               <button
-                onClick={() => setShowAddMemberModal(true)}
-                className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-md shadow-purple-600/20"
+                onClick={() => setMemberSubView('roster')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-extrabold transition-all ${
+                  memberSubView === 'roster'
+                    ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                }`}
               >
-                <UserPlus className="w-4 h-4" />
-                Add Guild Member
+                <Users className="w-3.5 h-3.5" />
+                1. Member List ({members.length})
+              </button>
+
+              <button
+                onClick={() => setMemberSubView('add_member')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-extrabold transition-all ${
+                  memberSubView === 'add_member'
+                    ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                }`}
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                2. Add Member
+              </button>
+
+              <button
+                onClick={() => setMemberSubView('add_class')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-extrabold transition-all ${
+                  memberSubView === 'add_class'
+                    ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                }`}
+              >
+                <Shield className="w-3.5 h-3.5" />
+                3. Add Class ({classes.length})
               </button>
             </div>
           </div>
 
-          {/* Guild Members Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredRosterMembers.map((mem) => {
-              const wonCount = historyItems.filter((h) => h.member_id === mem.id).length;
+          {/* SUB-PAGE 1: MEMBER LIST DIRECTORY */}
+          {memberSubView === 'roster' && (
+            <section className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/80 p-4 rounded-2xl border border-slate-800">
+                <h3 className="text-sm font-black uppercase tracking-wider text-slate-100 flex items-center gap-2">
+                  <Users className="w-4 h-4 text-purple-400" />
+                  Guild Member Directory ({members.length})
+                </h3>
 
-              return (
-                <div
-                  key={mem.id}
-                  className="bg-slate-900/80 rounded-2xl border border-slate-800 p-5 space-y-4 hover:border-purple-500/40 transition-all shadow-lg flex flex-col justify-between"
-                >
-                  <div className="space-y-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <div className="p-3 bg-purple-950/60 rounded-xl border border-purple-500/30 text-purple-300 font-bold text-base">
-                          {mem.name.substring(0, 2).toUpperCase()}
+                {/* Search Member Filter */}
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    type="text"
+                    placeholder="Search member, class, build..."
+                    value={memberRosterSearchQuery}
+                    onChange={(e) => setMemberRosterSearchQuery(e.target.value)}
+                    className="bg-slate-950 border border-slate-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-purple-500 w-full sm:w-64"
+                  />
+                </div>
+              </div>
+
+              {/* Guild Members Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filteredRosterMembers.map((mem) => {
+                  const wonCount = historyItems.filter((h) => h.member_id === mem.id).length;
+
+                  return (
+                    <div
+                      key={mem.id}
+                      className="bg-slate-900/80 rounded-2xl border border-slate-800 p-5 space-y-4 hover:border-purple-500/40 transition-all shadow-lg flex flex-col justify-between"
+                    >
+                      <div className="space-y-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <div className="p-3 bg-purple-950/60 rounded-xl border border-purple-500/30 text-purple-300 font-bold text-base">
+                              {mem.name.substring(0, 2).toUpperCase()}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                {renderMemberBadge(mem.name, mem.class)}
+                              </div>
+                              <span className="text-xs text-slate-400 font-mono block mt-1">{mem.discord_id}</span>
+                            </div>
+                          </div>
+
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-400 shrink-0">
+                            ID #{mem.id}
+                          </span>
                         </div>
-                        <div>
-                          <h3 className="font-extrabold text-slate-100 text-sm">{mem.name}</h3>
-                          <span className="text-xs text-slate-400 font-mono block">{mem.discord_id}</span>
+
+                        {/* GvG Build Spec Tag */}
+                        {mem.gvg_build && (
+                          <div className="p-2 bg-slate-950/60 rounded-xl border border-slate-800 flex items-center gap-2">
+                            <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                            <div className="overflow-hidden">
+                              <span className="text-[10px] text-slate-500 font-extrabold uppercase block">GvG Build Spec</span>
+                              <span className="font-bold text-amber-300 text-xs truncate block">{mem.gvg_build}</span>
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-2 gap-2 text-xs pt-1">
+                          <div className="p-2.5 bg-slate-950/60 rounded-xl border border-slate-800 flex items-center gap-2">
+                            <Trophy className="w-4 h-4 text-amber-400 shrink-0" />
+                            <div>
+                              <span className="text-[10px] text-slate-500 font-extrabold uppercase block">Items Won</span>
+                              <span className="font-extrabold text-slate-200">{wonCount}</span>
+                            </div>
+                          </div>
+
+                          <div className="p-2.5 bg-slate-950/60 rounded-xl border border-slate-800 flex items-center gap-2">
+                            <Shield className="w-4 h-4 text-purple-400 shrink-0" />
+                            <div>
+                              <span className="text-[10px] text-slate-500 font-extrabold uppercase block">Status</span>
+                              <span className="font-bold text-emerald-400">Active</span>
+                            </div>
+                          </div>
                         </div>
                       </div>
 
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-400">
-                        ID #{mem.id}
-                      </span>
+                      <button
+                        onClick={() => handleOpenMemberDetail(mem)}
+                        className="w-full py-2 bg-slate-950 hover:bg-slate-800 text-slate-200 border border-slate-800 hover:border-purple-500/40 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all"
+                      >
+                        View Member Profile & History
+                        <ChevronRight className="w-3.5 h-3.5 text-purple-400" />
+                      </button>
                     </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
 
-                    <div className="grid grid-cols-2 gap-2 text-xs pt-2">
-                      <div className="p-2.5 bg-slate-950/60 rounded-xl border border-slate-800 flex items-center gap-2">
-                        <Trophy className="w-4 h-4 text-amber-400 shrink-0" />
-                        <div>
-                          <span className="text-[10px] text-slate-500 font-extrabold uppercase block">Items Won</span>
-                          <span className="font-extrabold text-slate-200">{wonCount}</span>
-                        </div>
-                      </div>
+          {/* SUB-PAGE 2: ADD MEMBER FORM */}
+          {memberSubView === 'add_member' && (
+            <section className="max-w-2xl mx-auto bg-slate-900/90 rounded-2xl border border-purple-500/30 p-6 space-y-6 shadow-2xl">
+              <div className="pb-3 border-b border-slate-800">
+                <h3 className="text-base font-black uppercase tracking-wider text-slate-100 flex items-center gap-2">
+                  <UserPlus className="w-5 h-5 text-purple-400" />
+                  Add New Guild Member
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Register a player into the guild roster, select their character class, and input their GvG build spec.
+                </p>
+              </div>
 
-                      <div className="p-2.5 bg-slate-950/60 rounded-xl border border-slate-800 flex items-center gap-2">
-                        <Shield className="w-4 h-4 text-purple-400 shrink-0" />
-                        <div>
-                          <span className="text-[10px] text-slate-500 font-extrabold uppercase block">Status</span>
-                          <span className="font-bold text-emerald-400">Active</span>
-                        </div>
-                      </div>
-                    </div>
+              <form onSubmit={handleCreateMember} className="space-y-5">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-300 block">Member Name:</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Thrall"
+                      value={newMemberName}
+                      onChange={(e) => setNewMemberName(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-purple-500"
+                      required
+                    />
                   </div>
 
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-300 block">Discord Tag / ID:</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. thrall#9999"
+                      value={newMemberDiscord}
+                      onChange={(e) => setNewMemberDiscord(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-purple-500"
+                      required
+                    />
+                  </div>
+
+                  {/* Guild Class Selector */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-300 block">Guild Class:</label>
+                      <button
+                        type="button"
+                        onClick={() => setMemberSubView('add_class')}
+                        className="text-[11px] font-bold text-purple-400 hover:text-purple-300 flex items-center gap-1"
+                      >
+                        + Create New Class
+                      </button>
+                    </div>
+                    <select
+                      value={selectedMemberClassId}
+                      onChange={(e) => setSelectedMemberClassId(e.target.value ? Number(e.target.value) : '')}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-purple-500"
+                    >
+                      <option value="">-- Select Character Class --</option>
+                      {classes.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* GvG Build Field */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5 block">
+                      <Zap className="w-3.5 h-3.5 text-amber-400" />
+                      GvG Build Spec Note:
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Arms Mortal Strike / Frontline Bruiser"
+                      value={memberGvGBuild}
+                      onChange={(e) => setMemberGvGBuild(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-purple-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-3 pt-2 border-t border-slate-800">
                   <button
-                    onClick={() => handleOpenMemberDetail(mem)}
-                    className="w-full py-2 bg-slate-950 hover:bg-slate-800 text-slate-200 border border-slate-800 hover:border-purple-500/40 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all"
+                    type="button"
+                    onClick={() => setMemberSubView('roster')}
+                    className="px-5 py-2.5 bg-slate-950 border border-slate-800 hover:bg-slate-800 text-slate-400 text-xs font-bold rounded-xl"
                   >
-                    View Member Profile & History
-                    <ChevronRight className="w-3.5 h-3.5 text-purple-400" />
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="px-6 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-extrabold rounded-xl shadow-lg shadow-purple-600/20 flex items-center gap-2"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                    Save Guild Member
                   </button>
                 </div>
-              );
-            })}
-          </div>
+              </form>
+            </section>
+          )}
+
+          {/* SUB-PAGE 3: ADD CLASS FORM WITH COLOR PICKER */}
+          {memberSubView === 'add_class' && (
+            <section className="max-w-2xl mx-auto bg-slate-900/90 rounded-2xl border border-amber-500/30 p-6 space-y-6 shadow-2xl">
+              <div className="pb-3 border-b border-slate-800">
+                <h3 className="text-base font-black uppercase tracking-wider text-slate-100 flex items-center gap-2">
+                  <Shield className="w-5 h-5 text-amber-400" />
+                  Create New Guild Class
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Define a new character class for your guild and assign a unique color theme.
+                </p>
+              </div>
+
+              <form onSubmit={handleCreateClass} className="space-y-5">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-300 block">Class Name:</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Death Knight, Monk, Demon Hunter"
+                      value={newClassName}
+                      onChange={(e) => setNewClassName(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-purple-500"
+                      required
+                    />
+                  </div>
+
+                  {/* Class Color Picker & Swatches */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5 block">
+                      <Palette className="w-3.5 h-3.5 text-purple-400" />
+                      Class Color Theme:
+                    </label>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="color"
+                        value={newClassColor}
+                        onChange={(e) => setNewClassColor(e.target.value)}
+                        className="w-10 h-9 bg-slate-950 border border-slate-800 rounded-lg cursor-pointer p-0.5"
+                      />
+                      <input
+                        type="text"
+                        value={newClassColor}
+                        onChange={(e) => setNewClassColor(e.target.value)}
+                        className="w-28 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono font-bold text-slate-200 focus:outline-none focus:border-purple-500 uppercase"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Preset Color Swatches */}
+                <div className="space-y-2">
+                  <label className="text-[11px] font-extrabold uppercase text-slate-400 block">
+                    Preset Swatches:
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {COLOR_PRESETS.map((preset) => (
+                      <button
+                        key={preset.hex}
+                        type="button"
+                        onClick={() => setNewClassColor(preset.hex)}
+                        className="px-2.5 py-1 rounded-lg text-[10px] font-extrabold border flex items-center gap-1.5 transition-all hover:scale-105"
+                        style={{
+                          backgroundColor: `${preset.hex}20`,
+                          borderColor: `${preset.hex}60`,
+                          color: preset.hex === '#FFFFFF' ? '#F8FAFC' : preset.hex,
+                        }}
+                      >
+                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: preset.hex }} />
+                        {preset.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-3 pt-2 border-t border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setMemberSubView('roster')}
+                    className="px-5 py-2.5 bg-slate-950 border border-slate-800 hover:bg-slate-800 text-slate-400 text-xs font-bold rounded-xl"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="px-6 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-xl shadow-lg shadow-amber-500/20 flex items-center gap-2"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Save Guild Class
+                  </button>
+                </div>
+              </form>
+
+              {/* Existing Classes Directory Grid */}
+              <div className="space-y-3 pt-4 border-t border-slate-800">
+                <span className="text-xs font-extrabold uppercase tracking-wider text-slate-400 block">
+                  Existing Guild Classes in Registry ({classes.length}):
+                </span>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {classes.map((c) => (
+                    <div
+                      key={c.id}
+                      className="p-2.5 rounded-xl border flex items-center justify-between"
+                      style={{
+                        backgroundColor: `${c.color || '#A855F7'}15`,
+                        borderColor: `${c.color || '#A855F7'}40`,
+                      }}
+                    >
+                      <div className="flex items-center gap-2 overflow-hidden">
+                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: c.color || '#A855F7' }} />
+                        <span className="font-extrabold text-xs truncate" style={{ color: c.color === '#FFFFFF' ? '#F8FAFC' : c.color || '#A855F7' }}>
+                          {c.name}
+                        </span>
+                      </div>
+                      <span className="font-mono text-[9px] text-slate-500 uppercase">{c.color || '#A855F7'}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+          )}
         </main>
       )}
 
-      {/* PAGE 3: UNIFIED ITEMS & CATALOG PAGE */}
+      {/* PAGE 3: UNIFIED ITEMS & CATALOG PAGE (3 SECTIONS: 1. Create/Add Item, 2. Rank History Matrix, 3. Priority Queue) */}
       {activePage === 'items' && (
-        <main className="max-w-7xl mx-auto px-4 md:px-8 mt-6 space-y-6">
+        <main className="max-w-7xl mx-auto px-4 md:px-8 mt-6 space-y-8">
           {/* Page Header */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-900/60 p-4 rounded-2xl border border-slate-800">
             <div className="flex items-center gap-3">
               <Package className="w-5 h-5 text-purple-400 shrink-0" />
               <div>
                 <h2 className="text-sm font-extrabold text-slate-100 uppercase tracking-wider">
-                  Raid Items & Rank Matrix Directory ({items.length})
+                  Raid Items, Priority Queue & Rank Matrix ({items.length})
                 </h2>
                 <p className="text-xs text-slate-400">
-                  Create raid loot items, manage catalog drops, and inspect rank progression ordered chronologically from left to right.
+                  Manage raid loot catalog items, view rank progression timeline matrices, and inspect priority queue standings.
                 </p>
               </div>
             </div>
@@ -1462,17 +1741,17 @@ export const LootQueueConsole: React.FC = () => {
               className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-md shadow-purple-600/20"
             >
               <PlusCircle className="w-4 h-4" />
-              {showCreateItemForm ? 'Close Add Form' : 'Create / Add New Item'}
+              {showCreateItemForm ? 'Close Add Form' : '1. Create / Add New Item'}
             </button>
           </div>
 
-          {/* Section 1: Create New Item Form (Toggleable Card) */}
+          {/* SECTION 1: CREATE / ADD ITEM FORM */}
           {showCreateItemForm && (
-            <div className="bg-slate-900/90 rounded-2xl border border-purple-500/40 p-6 space-y-4 shadow-2xl">
+            <section className="bg-slate-900/90 rounded-2xl border border-purple-500/40 p-6 space-y-4 shadow-2xl">
               <div className="flex items-center justify-between pb-3 border-b border-slate-800">
                 <h3 className="text-sm font-black text-slate-100 flex items-center gap-2">
                   <PlusCircle className="w-4 h-4 text-purple-400" />
-                  Create / Add New Raid Item
+                  Section 1: Create / Add New Raid Item
                 </h3>
                 <button onClick={() => setShowCreateItemForm(false)} className="text-slate-400 hover:text-white">
                   <X className="w-4 h-4" />
@@ -1528,13 +1807,13 @@ export const LootQueueConsole: React.FC = () => {
                   </button>
                 </div>
               </form>
-            </div>
+            </section>
           )}
 
-          {/* Section 2: Item Selector Pills */}
+          {/* Item Selector Pills */}
           <div className="bg-slate-900/60 rounded-2xl border border-slate-800 p-4 space-y-3">
             <span className="text-xs font-extrabold uppercase tracking-wider text-slate-400 block">
-              Select Raid Item to Display Rank Progression Matrix:
+              Select Raid Item to View Rank History & Priority Queue:
             </span>
             <div className="flex flex-wrap gap-2">
               {items.map((item) => (
@@ -1580,173 +1859,283 @@ export const LootQueueConsole: React.FC = () => {
             </div>
           )}
 
-          {/* Section 3: Player Selection / Highlight Toolbar */}
-          <div className="bg-slate-900/80 rounded-2xl border border-slate-800 p-4 space-y-2">
+          {/* SECTION 2: RANK HISTORY MATRIX */}
+          <section className="space-y-4">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-extrabold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5" />
-                Select Player to Highlight Rank Progression Across Timeline:
-              </span>
-              {selectedHighlightMemberId && (
-                <button
-                  onClick={() => setSelectedHighlightMemberId(null)}
-                  className="text-[11px] font-bold text-rose-400 hover:text-rose-300 flex items-center gap-1"
-                >
-                  <X className="w-3.5 h-3.5" />
-                  Clear Highlight
-                </button>
-              )}
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {members.map((mem) => {
-                const isSelected = selectedHighlightMemberId === mem.id;
-                return (
-                  <button
-                    key={mem.id}
-                    onClick={() => setSelectedHighlightMemberId(isSelected ? null : mem.id)}
-                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
-                      isSelected
-                        ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/30 scale-105 border border-amber-400 font-extrabold'
-                        : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
-                    }`}
-                  >
-                    {isSelected ? '★ ' : ''}{mem.name}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Section 4: Rank-Indexed Matrix Table (Ordered Ascendingly 1..N) */}
-          <div className="bg-slate-900/80 rounded-2xl border border-slate-800 overflow-hidden shadow-xl space-y-3">
-            <div className="p-4 bg-slate-900 border-b border-slate-800 flex items-center justify-between">
-              <h3 className="text-xs font-black uppercase tracking-wider text-slate-200 flex items-center gap-2">
-                <Layers className="w-4 h-4 text-purple-400" />
-                Auction Priority Rank Matrix (Ordered Ascendingly 1..N)
+              <h3 className="text-sm font-black uppercase tracking-wider text-slate-100 flex items-center gap-2">
+                <Layers className="w-4.5 h-4.5 text-purple-400" />
+                Section 2: Rank History Matrix (Ordered Ascendingly 1..N)
               </h3>
-              <span className="text-[11px] text-slate-400">
-                Click any player name to highlight rank movements across all auctions
-              </span>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
-                <thead>
-                  <tr className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase">
-                    <th className="py-3.5 px-4 sticky left-0 bg-slate-950 z-10 border-r border-slate-800 text-center w-24">
-                      Priority Rank
-                    </th>
-                    {chronologicalAuctions.length > 0 ? (
-                      chronologicalAuctions.map((auc) => (
-                        <th key={auc.id} className="py-3.5 px-6 border-r border-slate-800 text-center min-w-[170px]">
-                          <span className="text-slate-200 block truncate max-w-[160px]">{auc.title}</span>
-                          <span className="text-[10px] text-purple-400 font-mono font-normal block">
-                            {new Date(auc.date).toLocaleDateString()}
-                          </span>
-                        </th>
-                      ))
-                    ) : (
-                      <th className="py-3.5 px-6 text-slate-500 italic font-normal">
-                        No past auctions recorded yet for this item
-                      </th>
-                    )}
-                    <th className="py-3.5 px-4 text-center bg-slate-950 min-w-[170px]">Current Live Rank</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                  {rankRowNumbers.map((rankNum) => (
-                    <tr key={rankNum} className="hover:bg-slate-800/40 transition-colors">
-                      {/* Priority Rank Header (Sticky Left Column) */}
-                      <td className="py-3.5 px-4 font-black text-amber-400 sticky left-0 bg-slate-900 border-r border-slate-800 text-center">
-                        #{rankNum}
-                      </td>
+            {/* Player Selection / Highlight Toolbar */}
+            <div className="bg-slate-900/80 rounded-2xl border border-slate-800 p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-extrabold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Select Player to Highlight Rank Progression Across Timeline:
+                </span>
+                {selectedHighlightMemberId && (
+                  <button
+                    onClick={() => setSelectedHighlightMemberId(null)}
+                    className="text-[11px] font-bold text-rose-400 hover:text-rose-300 flex items-center gap-1"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    Clear Highlight
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {members.map((mem) => {
+                  const isSelected = selectedHighlightMemberId === mem.id;
+                  return (
+                    <button
+                      key={mem.id}
+                      onClick={() => setSelectedHighlightMemberId(isSelected ? null : mem.id)}
+                      className="transition-all hover:scale-105"
+                    >
+                      {renderMemberBadge(
+                        mem.name,
+                        mem.class,
+                        isSelected ? <Sparkles className="w-3 h-3 text-amber-400" /> : undefined
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
 
-                      {/* Auction Snapshot Columns */}
+            {/* Rank-Indexed Matrix Table (Ordered Ascendingly 1..N) */}
+            <div className="bg-slate-900/80 rounded-2xl border border-slate-800 overflow-hidden shadow-xl space-y-3">
+              <div className="p-4 bg-slate-900 border-b border-slate-800 flex items-center justify-between">
+                <h4 className="text-xs font-black uppercase tracking-wider text-slate-200 flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-purple-400" />
+                  Chronological Auction Timeline (Left → Right)
+                </h4>
+                <span className="text-[11px] text-slate-400">
+                  Click any player name to highlight rank movements across all auctions
+                </span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                  <thead>
+                    <tr className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase">
+                      <th className="py-3.5 px-4 sticky left-0 bg-slate-950 z-10 border-r border-slate-800 text-center w-24">
+                        Priority Rank
+                      </th>
                       {chronologicalAuctions.length > 0 ? (
-                        chronologicalAuctions.map((auc) => {
-                          const snapshot = auctionRankToItemMap[auc.id]?.[rankNum];
-                          if (!snapshot) {
+                        chronologicalAuctions.map((auc) => (
+                          <th key={auc.id} className="py-3.5 px-6 border-r border-slate-800 text-center min-w-[200px]">
+                            <span className="text-slate-200 block truncate max-w-[190px]">{auc.title}</span>
+                            <span className="text-[10px] text-purple-400 font-mono font-normal block">
+                              {new Date(auc.date).toLocaleDateString()}
+                            </span>
+                          </th>
+                        ))
+                      ) : (
+                        <th className="py-3.5 px-6 text-slate-500 italic font-normal">
+                          No past auctions recorded yet for this item
+                        </th>
+                      )}
+                      <th className="py-3.5 px-4 text-center bg-slate-950 min-w-[200px]">Current Live Rank</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                    {rankRowNumbers.map((rankNum) => (
+                      <tr key={rankNum} className="hover:bg-slate-800/40 transition-colors">
+                        {/* Priority Rank Header (Sticky Left Column) */}
+                        <td className="py-3.5 px-4 font-black text-amber-400 sticky left-0 bg-slate-900 border-r border-slate-800 text-center">
+                          #{rankNum}
+                        </td>
+
+                        {/* Auction Snapshot Columns */}
+                        {chronologicalAuctions.length > 0 ? (
+                          chronologicalAuctions.map((auc) => {
+                            const snapshot = auctionRankToItemMap[auc.id]?.[rankNum];
+                            if (!snapshot) {
+                              return (
+                                <td key={auc.id} className="py-3.5 px-6 border-r border-slate-800/60 text-center text-slate-600 font-mono">
+                                  —
+                                </td>
+                              );
+                            }
+
+                            const isWinner = historyItems.some(
+                              (h) => h.member_id === snapshot.member_id && h.auction_id === auc.id
+                            );
+                            const isHighlighted = selectedHighlightMemberId === snapshot.member_id;
+
                             return (
-                              <td key={auc.id} className="py-3.5 px-6 border-r border-slate-800/60 text-center text-slate-600 font-mono">
-                                —
+                              <td key={auc.id} className="py-2.5 px-4 border-r border-slate-800/60 text-center">
+                                <button
+                                  onClick={() =>
+                                    setSelectedHighlightMemberId(isHighlighted ? null : snapshot.member_id)
+                                  }
+                                  className="transition-all hover:scale-105"
+                                >
+                                  {renderMemberBadge(
+                                    snapshot.member_name,
+                                    snapshot.member_class,
+                                    isWinner ? <Trophy className="w-3 h-3 text-amber-400 shrink-0" /> : undefined
+                                  )}
+                                </button>
                               </td>
                             );
+                          })
+                        ) : (
+                          <td colSpan={1} className="py-3.5 px-6 text-center text-slate-600">
+                            —
+                          </td>
+                        )}
+
+                        {/* Current Live Rank Column */}
+                        {(() => {
+                          const liveRanking = liveRankToItemMap[rankNum];
+                          if (!liveRanking) {
+                            return <td className="py-3.5 px-4 text-center text-slate-600 font-mono">—</td>;
                           }
 
-                          const isWinner = historyItems.some(
-                            (h) => h.member_id === snapshot.member_id && h.auction_id === auc.id
-                          );
-                          const isHighlighted = selectedHighlightMemberId === snapshot.member_id;
+                          const isHighlighted = selectedHighlightMemberId === liveRanking.member_id;
 
                           return (
-                            <td key={auc.id} className="py-2.5 px-4 border-r border-slate-800/60 text-center">
+                            <td className="py-2.5 px-4 text-center">
                               <button
                                 onClick={() =>
-                                  setSelectedHighlightMemberId(isHighlighted ? null : snapshot.member_id)
+                                  setSelectedHighlightMemberId(isHighlighted ? null : liveRanking.member_id)
                                 }
-                                className={`w-full py-1.5 px-3 rounded-xl border text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all ${
-                                  isHighlighted
-                                    ? 'bg-gradient-to-r from-amber-500/30 via-purple-600/30 to-amber-500/30 border-amber-400 text-amber-200 shadow-lg shadow-amber-500/20 scale-105 ring-2 ring-amber-400/50'
-                                    : isWinner
-                                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:border-emerald-400'
-                                    : 'bg-slate-950/80 text-slate-200 border-slate-800 hover:border-purple-500/40'
-                                }`}
+                                className="transition-all hover:scale-105"
                               >
-                                {isWinner ? (
-                                  <Trophy className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                                ) : (
-                                  <span className="text-[10px] text-slate-400 font-mono">#{snapshot.rank}</span>
+                                {renderMemberBadge(
+                                  liveRanking.member_name || `Member #${liveRanking.member_id}`,
+                                  liveRanking.member?.class,
+                                  <span className="text-[10px] font-mono text-slate-400">#{liveRanking.rank}</span>
                                 )}
-                                <span>{snapshot.member_name}</span>
-                                {isHighlighted && <Sparkles className="w-3 h-3 text-amber-400" />}
                               </button>
                             </td>
                           );
+                        })()}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          {/* SECTION 3: PRIORITY QUEUE & WINNER HISTORY */}
+          <section className="space-y-4">
+            <h3 className="text-sm font-black uppercase tracking-wider text-slate-100 flex items-center gap-2">
+              <ListChecks className="w-4.5 h-4.5 text-purple-400" />
+              Section 3: Live Priority Queue & Winner Allocations
+            </h3>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Live Priority Queue Rankings Table */}
+              <div className="lg:col-span-7 space-y-3">
+                <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                  <ListChecks className="w-4 h-4 text-purple-400" />
+                  Live Priority Queue Rankings (1..M)
+                </h4>
+
+                <div className="bg-slate-900/60 rounded-xl border border-slate-800 overflow-hidden">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-900 border-b border-slate-800 text-slate-400 font-semibold uppercase">
+                        <th className="py-3 px-4">Rank</th>
+                        <th className="py-3 px-4">Guild Member</th>
+                        <th className="py-3 px-4">Status</th>
+                        <th className="py-3 px-4">Rank Movement</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                      {queueRankings.length > 0 ? (
+                        queueRankings.map((r) => {
+                          const isWinner = historyItems.some((h) => h.member_id === r.member_id && h.item_id === r.item_id);
+                          return (
+                            <tr key={r.id} className="hover:bg-slate-800/40 transition-colors">
+                              <td className="py-3 px-4 font-extrabold text-amber-400">#{r.rank}</td>
+                              <td className="py-3 px-4">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  {renderMemberBadge(r.member_name || `Member #${r.member_id}`, r.member?.class)}
+                                </div>
+                                <span className="text-[10px] text-slate-500 font-mono block mt-0.5">{r.discord_id}</span>
+                              </td>
+                              <td className="py-3 px-4">
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                    r.status === 'WAITING'
+                                      ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                                      : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                  }`}
+                                >
+                                  {r.status}
+                                </span>
+                              </td>
+                              <td className="py-3 px-4">
+                                {renderRankMovementBadge(r.member_id, r.rank, isWinner && r.status === 'PAST_WINNER')}
+                              </td>
+                            </tr>
+                          );
                         })
                       ) : (
-                        <td colSpan={1} className="py-3.5 px-6 text-center text-slate-600">
-                          —
-                        </td>
-                      )}
-
-                      {/* Current Live Rank Column */}
-                      {(() => {
-                        const liveRanking = liveRankToItemMap[rankNum];
-                        if (!liveRanking) {
-                          return <td className="py-3.5 px-4 text-center text-slate-600 font-mono">—</td>;
-                        }
-
-                        const isHighlighted = selectedHighlightMemberId === liveRanking.member_id;
-
-                        return (
-                          <td className="py-2.5 px-4 text-center">
-                            <button
-                              onClick={() =>
-                                setSelectedHighlightMemberId(isHighlighted ? null : liveRanking.member_id)
-                              }
-                              className={`w-full py-1.5 px-3 rounded-xl border text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all ${
-                                isHighlighted
-                                  ? 'bg-gradient-to-r from-amber-500/30 via-purple-600/30 to-amber-500/30 border-amber-400 text-amber-200 shadow-lg shadow-amber-500/20 scale-105 ring-2 ring-amber-400/50'
-                                  : liveRanking.status === 'PAST_WINNER'
-                                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:border-emerald-400'
-                                  : 'bg-purple-950/40 text-purple-300 border-purple-500/30 hover:border-purple-400'
-                              }`}
-                            >
-                              <span className="text-[10px] font-mono">#{liveRanking.rank}</span>
-                              <span>{liveRanking.member_name}</span>
-                              {isHighlighted && <Sparkles className="w-3 h-3 text-amber-400" />}
-                            </button>
+                        <tr>
+                          <td colSpan={4} className="py-6 text-center text-slate-500">
+                            No active queue rankings recorded for this item yet.
                           </td>
-                        );
-                      })()}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
 
-          {/* Section 5: Raid Catalog Items List Table */}
+              {/* Allocation Winner History */}
+              <div className="lg:col-span-5 space-y-3">
+                <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                  <History className="w-4 h-4 text-indigo-400" />
+                  Allocation Winner History
+                </h4>
+
+                <div className="bg-slate-900/60 rounded-xl border border-slate-800 overflow-hidden">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-900 border-b border-slate-800 text-slate-400 font-semibold uppercase">
+                        <th className="py-3 px-4">Winner</th>
+                        <th className="py-3 px-4">Auction</th>
+                        <th className="py-3 px-4">Allocated At</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                      {historyItems.length > 0 ? (
+                        historyItems.map((h) => (
+                          <tr key={h.id} className="hover:bg-slate-800/40 transition-colors">
+                            <td className="py-3 px-4">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {renderMemberBadge(h.member_name, h.member_class, <Trophy className="w-3.5 h-3.5 text-amber-400 shrink-0" />)}
+                              </div>
+                            </td>
+                            <td className="py-3 px-4 text-slate-400 truncate max-w-[120px]">{h.auction_title}</td>
+                            <td className="py-3 px-4 text-slate-400 font-mono text-[11px]">
+                              {new Date(h.allocated_at).toLocaleTimeString()}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={3} className="py-6 text-center text-slate-500">
+                            No resolved allocations for this item yet.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Section 4: Raid Catalog Items List Table */}
           <div className="space-y-3 pt-6 border-t border-slate-800">
             <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-2">
               <Package className="w-4 h-4 text-purple-400" />
@@ -1787,66 +2176,6 @@ export const LootQueueConsole: React.FC = () => {
         </main>
       )}
 
-      {/* Add New Guild Member Modal */}
-      {showAddMemberModal && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <h3 className="text-sm font-extrabold uppercase tracking-wider text-slate-100 flex items-center gap-2">
-                <UserPlus className="w-4 h-4 text-purple-400" />
-                Add New Guild Member
-              </h3>
-              <button onClick={() => setShowAddMemberModal(false)} className="text-slate-400 hover:text-white">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateMember} className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-300 block">Member Name:</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Thrall"
-                  value={newMemberName}
-                  onChange={(e) => setNewMemberName(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-100 focus:outline-none focus:border-purple-500"
-                  required
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-300 block">Discord Tag / ID:</label>
-                <input
-                  type="text"
-                  placeholder="e.g. thrall#9999"
-                  value={newMemberDiscord}
-                  onChange={(e) => setNewMemberDiscord(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-100 focus:outline-none focus:border-purple-500"
-                  required
-                />
-              </div>
-
-              <div className="flex items-center gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowAddMemberModal(false)}
-                  className="flex-1 py-2.5 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-400 text-xs font-bold rounded-xl"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="flex-1 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-extrabold rounded-xl shadow-lg shadow-purple-600/20"
-                >
-                  Add Member
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
       {/* Member Profile Detail Modal */}
       {selectedDetailMember && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -1857,8 +2186,10 @@ export const LootQueueConsole: React.FC = () => {
                   {selectedDetailMember.name.substring(0, 2).toUpperCase()}
                 </div>
                 <div>
-                  <h3 className="text-base font-extrabold text-slate-100">{selectedDetailMember.name}</h3>
-                  <span className="text-xs text-slate-400 font-mono block">{selectedDetailMember.discord_id}</span>
+                  <div className="flex items-center gap-2">
+                    {renderMemberBadge(selectedDetailMember.name, selectedDetailMember.class)}
+                  </div>
+                  <span className="text-xs text-slate-400 font-mono block mt-1">{selectedDetailMember.discord_id}</span>
                 </div>
               </div>
 
@@ -1866,6 +2197,16 @@ export const LootQueueConsole: React.FC = () => {
                 <X className="w-5 h-5" />
               </button>
             </div>
+
+            {/* GvG Build Details */}
+            {selectedDetailMember.gvg_build && (
+              <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-1">
+                <span className="text-[10px] font-extrabold uppercase text-amber-400 flex items-center gap-1">
+                  <Zap className="w-3 h-3" /> GvG Build Spec Note
+                </span>
+                <p className="text-xs font-semibold text-amber-200">{selectedDetailMember.gvg_build}</p>
+              </div>
+            )}
 
             {/* Member Loot Won History */}
             <div className="space-y-3">

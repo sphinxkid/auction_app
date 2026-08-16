@@ -49,6 +49,7 @@ func InitDB(cfg *config.Config) (*gorm.DB, error) {
 
 	// Execute AutoMigrations for core domain models
 	err = db.AutoMigrate(
+		&models.GuildClass{},
 		&models.GuildMember{},
 		&models.Item{},
 		&models.Auction{},

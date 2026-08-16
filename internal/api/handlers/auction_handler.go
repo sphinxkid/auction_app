@@ -14,12 +14,60 @@ import (
 	"guild-loot-system/internal/services"
 )
 
+// GetClassesHandler handles GET /api/v1/classes
+func GetClassesHandler(db *gorm.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var classes []models.GuildClass
+		if err := db.Order("id ASC").Find(&classes).Error; err != nil {
+			http.Error(w, `{"error":"failed to fetch guild classes"}`, http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(classes)
+	}
+}
+
+type CreateClassRequest struct {
+	Name  string `json:"name"`
+	Color string `json:"color"`
+}
+
+// CreateClassHandler handles POST /api/v1/classes
+func CreateClassHandler(db *gorm.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var req CreateClassRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+			return
+		}
+		if req.Name == "" {
+			http.Error(w, `{"error":"class name is required"}`, http.StatusBadRequest)
+			return
+		}
+		color := req.Color
+		if color == "" {
+			color = "#A855F7"
+		}
+		gc := models.GuildClass{
+			Name:  req.Name,
+			Color: color,
+		}
+		if err := db.Create(&gc).Error; err != nil {
+			http.Error(w, `{"error":"failed to create guild class or class name already exists"}`, http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(gc)
+	}
+}
+
 // GetMembersHandler handles GET /api/v1/members
 func GetMembersHandler(db *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		var members []models.GuildMember
-		if err := db.Order("id ASC").Find(&members).Error; err != nil {
+		if err := db.Preload("Class").Order("id ASC").Find(&members).Error; err != nil {
 			http.Error(w, `{"error":"failed to fetch members"}`, http.StatusInternalServerError)
 			return
 		}
@@ -30,6 +78,8 @@ func GetMembersHandler(db *gorm.DB) http.HandlerFunc {
 type CreateMemberRequest struct {
 	Name      string `json:"name"`
 	DiscordID string `json:"discord_id"`
+	ClassID   *uint  `json:"class_id"`
+	GvGBuild  string `json:"gvg_build"`
 }
 
 // CreateMemberHandler handles POST /api/v1/members
@@ -51,12 +101,16 @@ func CreateMemberHandler(db *gorm.DB) http.HandlerFunc {
 		member := models.GuildMember{
 			Name:      req.Name,
 			DiscordID: req.DiscordID,
+			ClassID:   req.ClassID,
+			GvGBuild:  req.GvGBuild,
 		}
 
 		if err := db.Create(&member).Error; err != nil {
 			http.Error(w, `{"error":"failed to create guild member or discord_id already exists"}`, http.StatusBadRequest)
 			return
 		}
+
+		_ = db.Preload("Class").First(&member, member.ID)
 
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(member)
@@ -122,8 +176,9 @@ type CreateAuctionItemRequest struct {
 
 // CreateAuctionRequest payload
 type CreateAuctionRequest struct {
-	Title string                     `json:"title"`
-	Items []CreateAuctionItemRequest `json:"items"`
+	Title       string                     `json:"title"`
+	AuctionDate string                     `json:"auction_date"`
+	Items       []CreateAuctionItemRequest `json:"items"`
 }
 
 // CreateAuctionHandler handles POST /api/v1/auctions
@@ -147,12 +202,23 @@ func CreateAuctionHandler(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
+		auctionDate := time.Now().UTC()
+		if req.AuctionDate != "" {
+			if parsed, err := time.Parse(time.RFC3339, req.AuctionDate); err == nil {
+				auctionDate = parsed
+			} else if parsedDate, err := time.Parse("2006-01-02T15:04", req.AuctionDate); err == nil {
+				auctionDate = parsedDate
+			} else if parsedDateOnly, err := time.Parse("2006-01-02", req.AuctionDate); err == nil {
+				auctionDate = parsedDateOnly
+			}
+		}
+
 		var createdAuction models.Auction
 		err := db.Transaction(func(tx *gorm.DB) error {
 			auction := models.Auction{
 				Title:       req.Title,
 				Status:      models.AuctionStatusActive,
-				AuctionDate: time.Now().UTC(),
+				AuctionDate: auctionDate,
 			}
 
 			if err := tx.Create(&auction).Error; err != nil {
@@ -177,7 +243,7 @@ func CreateAuctionHandler(db *gorm.DB) http.HandlerFunc {
 			}
 
 			// Preload for response
-			if err := tx.Preload("AuctionItems.Item").Preload("AuctionItems.Intents.Member").First(&createdAuction, auction.ID).Error; err != nil {
+			if err := tx.Preload("AuctionItems.Item").Preload("AuctionItems.Intents.Member.Class").First(&createdAuction, auction.ID).Error; err != nil {
 				return err
 			}
 
@@ -201,7 +267,7 @@ func GetActiveAuctionHandler(db *gorm.DB) http.HandlerFunc {
 
 		var auction models.Auction
 		err := db.Preload("AuctionItems.Item").
-			Preload("AuctionItems.Intents.Member").
+			Preload("AuctionItems.Intents.Member.Class").
 			Where("status = ?", models.AuctionStatusActive).
 			Order("auction_date DESC").
 			First(&auction).Error

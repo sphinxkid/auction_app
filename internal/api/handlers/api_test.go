@@ -37,6 +37,30 @@ func TestAPI_Step3EndpointsWorkflow(t *testing.T) {
 	ts := httptest.NewServer(server.GetRouter())
 	defer ts.Close()
 
+	// 0. Test GET /api/v1/classes
+	classRes, err := http.Get(ts.URL + "/api/v1/classes")
+	if err != nil {
+		t.Fatalf("GET /api/v1/classes failed: %v", err)
+	}
+	if classRes.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK, got %d", classRes.StatusCode)
+	}
+	var classes []models.GuildClass
+	_ = json.NewDecoder(classRes.Body).Decode(&classes)
+	classRes.Body.Close()
+	if len(classes) != 9 {
+		t.Errorf("Expected 9 seeded classes, got %d", len(classes))
+	}
+
+	// 0b. Test POST /api/v1/classes
+	newClassReq := handlers.CreateClassRequest{Name: "Death Knight"}
+	cBody, _ := json.Marshal(newClassReq)
+	postCRes, err := http.Post(ts.URL+"/api/v1/classes", "application/json", bytes.NewBuffer(cBody))
+	if err != nil || postCRes.StatusCode != http.StatusCreated {
+		t.Fatalf("POST /api/v1/classes failed: %v", err)
+	}
+	postCRes.Body.Close()
+
 	// 1. Test GET /api/v1/members
 	res, err := http.Get(ts.URL + "/api/v1/members")
 	if err != nil {
@@ -52,10 +76,13 @@ func TestAPI_Step3EndpointsWorkflow(t *testing.T) {
 		t.Errorf("Expected 16 seeded members, got %d", len(members))
 	}
 
-	// 1b. Test POST /api/v1/members (Create new guild member)
+	// 1b. Test POST /api/v1/members with ClassID & GvGBuild
+	warrClassID := classes[0].ID
 	newMemReq := handlers.CreateMemberRequest{
 		Name:      "Thrall",
 		DiscordID: "thrall#9999",
+		ClassID:   &warrClassID,
+		GvGBuild:  "Shaman Burst / Windfury Spec",
 	}
 	memBody, _ := json.Marshal(newMemReq)
 	postMemRes, err := http.Post(ts.URL+"/api/v1/members", "application/json", bytes.NewBuffer(memBody))

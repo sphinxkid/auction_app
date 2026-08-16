@@ -50,6 +50,8 @@ func NewServer(cfg *config.Config, db *gorm.DB) *Server {
 	// RESTful API v1 Routes
 	r.Route("/api/v1", func(r chi.Router) {
 		// Domain Queries & Management
+		r.Get("/classes", handlers.GetClassesHandler(db))
+		r.Post("/classes", handlers.CreateClassHandler(db))
 		r.Get("/members", handlers.GetMembersHandler(db))
 		r.Post("/members", handlers.CreateMemberHandler(db))
 		r.Get("/items", handlers.GetItemsHandler(db))

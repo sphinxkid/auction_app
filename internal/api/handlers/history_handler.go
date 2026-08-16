@@ -15,16 +15,17 @@ import (
 
 // AllocationHistoryView Response DTO
 type AllocationHistoryView struct {
-	ID                uint      `json:"id"`
-	AuctionID         uint      `json:"auction_id"`
-	AuctionTitle      string    `json:"auction_title"`
-	ItemID            uint      `json:"item_id"`
-	ItemName          string    `json:"item_name"`
-	MemberID          uint      `json:"member_id"`
-	MemberName        string    `json:"member_name"`
-	DiscordID         string    `json:"discord_id"`
-	AllocatedQuantity int       `json:"allocated_quantity"`
-	AllocatedAt       time.Time `json:"allocated_at"`
+	ID                uint               `json:"id"`
+	AuctionID         uint               `json:"auction_id"`
+	AuctionTitle      string             `json:"auction_title"`
+	ItemID            uint               `json:"item_id"`
+	ItemName          string             `json:"item_name"`
+	MemberID          uint               `json:"member_id"`
+	MemberName        string             `json:"member_name"`
+	DiscordID         string             `json:"discord_id"`
+	MemberClass       *models.GuildClass `json:"member_class,omitempty"`
+	AllocatedQuantity int                `json:"allocated_quantity"`
+	AllocatedAt       time.Time          `json:"allocated_at"`
 }
 
 func mapAllocationHistoryViews(records []models.AllocationHistory) []AllocationHistoryView {
@@ -39,6 +40,7 @@ func mapAllocationHistoryViews(records []models.AllocationHistory) []AllocationH
 			MemberID:          r.MemberID,
 			MemberName:        r.Member.Name,
 			DiscordID:         r.Member.DiscordID,
+			MemberClass:       r.Member.Class,
 			AllocatedQuantity: r.AllocatedQuantity,
 			AllocatedAt:       r.AllocatedAt,
 		}
@@ -109,7 +111,7 @@ func GetItemHistoryHandler(db *gorm.DB) http.HandlerFunc {
 		}
 
 		var histories []models.AllocationHistory
-		err = db.Preload("Auction").Preload("Item").Preload("Member").
+		err = db.Preload("Auction").Preload("Item").Preload("Member.Class").
 			Where("item_id = ?", itemID).
 			Order("allocated_at DESC").
 			Find(&histories).Error
@@ -148,7 +150,7 @@ func GetMemberHistoryHandler(db *gorm.DB) http.HandlerFunc {
 		}
 
 		var histories []models.AllocationHistory
-		err = db.Preload("Auction").Preload("Item").Preload("Member").
+		err = db.Preload("Auction").Preload("Item").Preload("Member.Class").
 			Where("member_id = ?", memberID).
 			Order("allocated_at DESC").
 			Find(&histories).Error
@@ -165,18 +167,19 @@ func GetMemberHistoryHandler(db *gorm.DB) http.HandlerFunc {
 
 // ItemRankHistoryView Response DTO
 type ItemRankHistoryView struct {
-	ID            uint      `json:"id"`
-	AuctionID     uint      `json:"auction_id"`
-	AuctionTitle  string    `json:"auction_title"`
-	AuctionItemID uint      `json:"auction_item_id"`
-	ItemID        uint      `json:"item_id"`
-	ItemName      string    `json:"item_name"`
-	MemberID      uint      `json:"member_id"`
-	MemberName    string    `json:"member_name"`
-	DiscordID     string    `json:"discord_id"`
-	Rank          int       `json:"rank"`
-	Status        string    `json:"status"`
-	RecordedAt    time.Time `json:"recorded_at"`
+	ID            uint               `json:"id"`
+	AuctionID     uint               `json:"auction_id"`
+	AuctionTitle  string             `json:"auction_title"`
+	AuctionItemID uint               `json:"auction_item_id"`
+	ItemID        uint               `json:"item_id"`
+	ItemName      string             `json:"item_name"`
+	MemberID      uint               `json:"member_id"`
+	MemberName    string             `json:"member_name"`
+	DiscordID     string             `json:"discord_id"`
+	MemberClass   *models.GuildClass `json:"member_class,omitempty"`
+	Rank          int                `json:"rank"`
+	Status        string             `json:"status"`
+	RecordedAt    time.Time          `json:"recorded_at"`
 }
 
 // GetItemRankHistoryHandler handles GET /api/v1/history/ranks/items/{id}
@@ -192,7 +195,7 @@ func GetItemRankHistoryHandler(db *gorm.DB) http.HandlerFunc {
 		}
 
 		var records []models.ItemRankHistory
-		err = db.Preload("Auction").Preload("Item").Preload("Member").
+		err = db.Preload("Auction").Preload("Item").Preload("Member.Class").
 			Where("item_id = ?", itemID).
 			Order("recorded_at DESC, rank ASC").
 			Find(&records).Error
@@ -214,6 +217,7 @@ func GetItemRankHistoryHandler(db *gorm.DB) http.HandlerFunc {
 				MemberID:      r.MemberID,
 				MemberName:    r.Member.Name,
 				DiscordID:     r.Member.DiscordID,
+				MemberClass:   r.Member.Class,
 				Rank:          r.Rank,
 				Status:        r.Status,
 				RecordedAt:    r.RecordedAt,

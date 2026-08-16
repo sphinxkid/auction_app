@@ -23,12 +23,23 @@ const (
 	QueueStatusPastWinner = "PAST_WINNER"
 )
 
+// GuildClass represents a character class in the guild (e.g. Warrior, Mage, Priest).
+type GuildClass struct {
+	ID        uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	Name      string    `gorm:"type:varchar(100);uniqueIndex;not null" json:"name"`
+	Color     string    `gorm:"type:varchar(30);default:'#A855F7';not null" json:"color"`
+	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+}
+
 // GuildMember represents a player/member of the guild.
 type GuildMember struct {
-	ID        uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	Name      string    `gorm:"type:varchar(100);not null" json:"name"`
-	DiscordID string    `gorm:"type:varchar(100);uniqueIndex;not null" json:"discord_id"`
-	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+	ID        uint        `gorm:"primaryKey;autoIncrement" json:"id"`
+	Name      string      `gorm:"type:varchar(100);not null" json:"name"`
+	DiscordID string      `gorm:"type:varchar(100);uniqueIndex;not null" json:"discord_id"`
+	ClassID   *uint       `gorm:"index" json:"class_id,omitempty"`
+	Class     *GuildClass `gorm:"foreignKey:ClassID" json:"class,omitempty"`
+	GvGBuild  string      `gorm:"type:varchar(150);default:''" json:"gvg_build"`
+	CreatedAt time.Time   `gorm:"autoCreateTime" json:"created_at"`
 }
 
 // Item represents raid loot that can be auctioned or allocated.

@@ -52,7 +52,7 @@ func GetItemQueueRankingsHandler(db *gorm.DB) http.HandlerFunc {
 
 		// Query queue rankings with eager loaded GuildMember and Item, ordered by Rank ASC
 		var rankings []models.ItemQueueRanking
-		err = db.Preload("Member").Preload("Item").
+		err = db.Preload("Member.Class").Preload("Item").
 			Where("item_id = ?", itemID).
 			Order("rank ASC").
 			Find(&rankings).Error
