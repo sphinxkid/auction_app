@@ -47,14 +47,32 @@ func NewServer(cfg *config.Config, db *gorm.DB) *Server {
 	// Health check route
 	r.Get("/health", handlers.HealthHandler(db))
 
-	// Auction resolution route
-	r.Post("/auctions/{id}/resolve", handlers.ResolveAuctionHandler(db))
+	// RESTful API v1 Routes
+	r.Route("/api/v1", func(r chi.Router) {
+		// Auction Management
+		r.Post("/auctions", handlers.CreateAuctionHandler(db))
+		r.Post("/auctions/{id}/intents", handlers.SubmitIntentHandler(db))
+		r.Post("/auctions/{id}/resolve", handlers.ResolveAuctionHandler(db))
+
+		// Queue & Ranking Views
+		r.Get("/items/{id}/rankings", handlers.GetItemQueueRankingsHandler(db))
+
+		// Allocation History Views
+		r.Get("/history/auctions/{id}", handlers.GetAuctionHistoryHandler(db))
+		r.Get("/history/items/{id}", handlers.GetItemHistoryHandler(db))
+		r.Get("/history/members/{id}", handlers.GetMemberHistoryHandler(db))
+	})
 
 	return &Server{
 		router: r,
 		config: cfg,
 		db:     db,
 	}
+}
+
+// GetRouter returns the underlying Chi router instance (useful for testing).
+func (s *Server) GetRouter() *chi.Mux {
+	return s.router
 }
 
 // Start launches the HTTP server with graceful shutdown handling.

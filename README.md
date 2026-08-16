@@ -1,86 +1,67 @@
-# Guild Loot Queueing & Allocation System (Step 1 Foundation)
+# Guild Loot Queueing & Allocation System
 
-A Go backend system for managing predictable, repeatable guild raid loot via sequential auctions and three-tier priority queueing.
+A Go backend system for managing predictable, repeatable guild raid loot via sequential auctions, three-tier priority queueing, explicit sequential integer re-ranking ($1..M$), and allocation history.
 
 ## Project Architecture
 
 ```text
 ├── cmd/
 │   └── api/
-│       └── main.go              # Application entrypoint
+│       └── main.go                  # Application entrypoint
 ├── internal/
 │   ├── api/
 │   │   ├── handlers/
-│   │   │   ├── health.go        # /health HTTP handler
-│   │   │   └── health_test.go   # Health handler unit tests
-│   │   └── server.go            # Chi router & server lifecycle
+│   │   │   ├── api_test.go          # REST API integration tests
+│   │   │   ├── auction_handler.go   # Auction & intent HTTP handlers
+│   │   │   ├── history_handler.go   # Allocation history HTTP handlers
+│   │   │   ├── queue_handler.go     # Item queue rankings HTTP handler
+│   │   │   ├── health.go            # /health HTTP handler
+│   │   │   └── health_test.go       # Health unit tests
+│   │   └── server.go                # Chi router & server lifecycle
 │   ├── config/
-│   │   └── config.go            # Environment configuration
+│   │   └── config.go                # Environment configuration
 │   ├── database/
-│   │   ├── database.go          # GORM SQLite connection & auto-migration
-│   │   ├── database_test.go     # Migration & seeder unit tests
-│   │   └── seeder.go            # Idempotent data seeder
-│   └── models/
-│       └── models.go            # Domain models (GuildMember, Item, Auction, etc.)
-├── go.mod                       # Module definition
-└── README.md                    # System documentation
+│   │   ├── database.go              # GORM SQLite connection & auto-migration
+│   │   ├── database_test.go         # Migration & seeder unit tests
+│   │   └── seeder.go                # Idempotent data seeder
+│   ├── models/
+│   │   └── models.go                # Domain models (GuildMember, Item, Auction, etc.)
+│   └── services/
+│       ├── allocation.go            # Core 3-tier allocation engine service
+│       └── allocation_test.go       # Allocation engine unit tests
+├── go.mod                           # Module definition
+└── README.md                        # System documentation
 ```
-
-## Data Models
-
-1. **GuildMember**: Guild player profile (`ID`, `Name`, `DiscordID`, `CreatedAt`).
-2. **Item**: Raid loot item (`ID`, `Name`, `Description`, `IsRepeatable`).
-3. **Auction**: Raid loot auction instance (`ID`, `Title`, `Status`, `AuctionDate`).
-4. **IntentToBuy**: Bid submission record (`ID`, `AuctionID`, `ItemID`, `MemberID`, `SubmittedAt`).
-5. **ItemQueueRanking**: Sequential priority queue position (`ID`, `ItemID`, `MemberID`, `Rank`, `Status`, `LastWonAt`, `UpdatedAt`).
-6. **AllocationHistory**: Resolved loot allocation history (`ID`, `AuctionID`, `ItemID`, `MemberID`, `AllocatedQuantity`, `AllocatedAt`).
 
 ---
 
-## How to Run
+## RESTful API Endpoints (`/api/v1`)
 
-### Prerequisites
-- Go 1.22+
+### Auction Management
+- `POST /api/v1/auctions`: Create a new auction.
+  - Body: `{"title": "Sunwell Raid Loot", "auction_date": "2026-08-20T19:00:00Z"}`
+- `POST /api/v1/auctions/:id/intents`: Submit member "Intent to Buy".
+  - Body: `{"item_id": 1, "member_id": 2}`
+- `POST /api/v1/auctions/:id/resolve`: Process allocation engine & update global ranks $1..M$.
+  - Body: `{"item_id": 1, "quantity": 1}`
 
-### Running the API Server
+### Queue & History Views
+- `GET /api/v1/items/:id/rankings`: Complete active queue ranking for an item (member name, rank, status, last won timestamp).
+- `GET /api/v1/history/auctions/:id`: Allocation history by auction ID.
+- `GET /api/v1/history/items/:id`: Allocation history by item ID.
+- `GET /api/v1/history/members/:id`: Allocation history by guild member ID.
+
+### System Health
+- `GET /health`: DB connectivity status.
+
+---
+
+## How to Run & Test
 
 ```bash
 # Build and run the server
 go run ./cmd/api
 
-# Or set custom server address / DB file:
-SERVER_ADDRESS=127.0.0.1:8080 DB_PATH=guild_loot.db go run ./cmd/api
-```
-
-Upon startup, the system will:
-1. Initialize the SQLite database connection (`guild_loot.db`).
-2. Run GORM Auto-Migrations for all domain entities.
-3. Automatically seed 5 guild members and 3 repeatable raid items.
-4. Start the HTTP server listening on `http://127.0.0.1:8080`.
-
----
-
-## Verifying Health Endpoint
-
-In a separate terminal, query the `/health` endpoint:
-
-```bash
-curl -i http://127.0.0.1:8080/health
-```
-
-Expected JSON response (`200 OK`):
-```json
-{
-  "status": "ok",
-  "database": "connected",
-  "timestamp": "2026-08-16T13:25:00Z"
-}
-```
-
----
-
-## Running Unit Tests
-
-```bash
+# Run full unit & integration test suite
 go test -v ./...
 ```
