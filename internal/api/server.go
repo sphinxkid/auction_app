@@ -52,8 +52,12 @@ func NewServer(cfg *config.Config, db *gorm.DB) *Server {
 		// Domain Queries & Management
 		r.Get("/classes", handlers.GetClassesHandler(db))
 		r.Post("/classes", handlers.CreateClassHandler(db))
+		r.Put("/classes/{id}", handlers.UpdateClassHandler(db))
+		r.Patch("/classes/{id}", handlers.UpdateClassHandler(db))
 		r.Get("/members", handlers.GetMembersHandler(db))
 		r.Post("/members", handlers.CreateMemberHandler(db))
+		r.Put("/members/{id}", handlers.UpdateMemberHandler(db))
+		r.Patch("/members/{id}", handlers.UpdateMemberHandler(db))
 		r.Get("/items", handlers.GetItemsHandler(db))
 		r.Post("/items", handlers.CreateItemHandler(db))
 

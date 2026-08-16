@@ -7,7 +7,10 @@ import {
   Plus,
   Shield,
   Clock,
-  Sparkles
+  Sparkles,
+  Edit3,
+  X,
+  CheckCircle2
 } from 'lucide-react';
 import {
   Member,
@@ -46,9 +49,21 @@ export const GuildRosterConsole: React.FC<GuildRosterConsoleProps> = ({
   const [newMemberClassId, setNewMemberClassId] = useState<number | null>(null);
   const [newMemberBuild, setNewMemberBuild] = useState('');
 
+  // Edit Member Modal State
+  const [editingMember, setEditingMember] = useState<Member | null>(null);
+  const [editMemberName, setEditMemberName] = useState('');
+  const [editMemberDiscord, setEditMemberDiscord] = useState('');
+  const [editMemberClassId, setEditMemberClassId] = useState<number | null>(null);
+  const [editMemberBuild, setEditMemberBuild] = useState('');
+
   // New Class Form State
   const [newClassName, setNewClassName] = useState('');
   const [newClassColor, setNewClassColor] = useState('#C79C6E');
+
+  // Edit Class Modal State
+  const [editingClass, setEditingClass] = useState<GuildClass | null>(null);
+  const [editClassName, setEditClassName] = useState('');
+  const [editClassColor, setEditClassColor] = useState('#A855F7');
 
   const filteredRosterMembers = members.filter(
     (m) =>
@@ -95,6 +110,50 @@ export const GuildRosterConsole: React.FC<GuildRosterConsoleProps> = ({
     }
   };
 
+  const openEditMemberModal = (m: Member) => {
+    setEditingMember(m);
+    setEditMemberName(m.name);
+    setEditMemberDiscord(m.discord_id);
+    setEditMemberClassId(m.class_id || null);
+    setEditMemberBuild(m.gvg_build || '');
+  };
+
+  const handleUpdateMember = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingMember) return;
+    if (!editMemberName.trim() || !editMemberDiscord.trim()) {
+      showMsg('error', 'Name and Discord ID are required.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/v1/members/${editingMember.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: editMemberName.trim(),
+          discord_id: editMemberDiscord.trim(),
+          class_id: editMemberClassId ? editMemberClassId : undefined,
+          gvg_build: editMemberBuild.trim(),
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to update member');
+      }
+
+      showMsg('success', `Guild Member "${editMemberName}" updated successfully!`);
+      setEditingMember(null);
+      await fetchMembers();
+    } catch (err: any) {
+      showMsg('error', err.message || 'Failed to update member');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleCreateClass = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newClassName.trim()) {
@@ -122,6 +181,46 @@ export const GuildRosterConsole: React.FC<GuildRosterConsoleProps> = ({
       await fetchClasses();
     } catch (err: any) {
       showMsg('error', err.message || 'Failed to create class');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const openEditClassModal = (cls: GuildClass) => {
+    setEditingClass(cls);
+    setEditClassName(cls.name);
+    setEditClassColor(cls.color || '#A855F7');
+  };
+
+  const handleUpdateClass = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingClass) return;
+    if (!editClassName.trim()) {
+      showMsg('error', 'Class Name is required.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/v1/classes/${editingClass.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: editClassName.trim(),
+          color: editClassColor,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to update class');
+      }
+
+      showMsg('success', `Guild Class "${editClassName}" updated successfully!`);
+      setEditingClass(null);
+      await Promise.all([fetchClasses(), fetchMembers()]);
+    } catch (err: any) {
+      showMsg('error', err.message || 'Failed to update class');
     } finally {
       setLoading(false);
     }
@@ -200,7 +299,7 @@ export const GuildRosterConsole: React.FC<GuildRosterConsoleProps> = ({
             {filteredRosterMembers.map((m) => (
               <div
                 key={m.id}
-                className="p-4 bg-slate-950/80 rounded-xl border border-slate-800/80 space-y-2 flex flex-col justify-between"
+                className="p-4 bg-slate-950/80 rounded-xl border border-slate-800/80 space-y-3 flex flex-col justify-between"
               >
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-2">
@@ -218,6 +317,16 @@ export const GuildRosterConsole: React.FC<GuildRosterConsoleProps> = ({
                       {m.gvg_build}
                     </div>
                   )}
+                </div>
+
+                <div className="pt-2 border-t border-slate-800/80 flex items-center justify-end">
+                  <button
+                    onClick={() => openEditMemberModal(m)}
+                    className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-purple-300 border border-purple-500/30 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm"
+                  >
+                    <Edit3 className="w-3.5 h-3.5 text-purple-400" />
+                    Edit Member
+                  </button>
                 </div>
               </div>
             ))}
@@ -398,28 +507,234 @@ export const GuildRosterConsole: React.FC<GuildRosterConsoleProps> = ({
               Registered Guild Classes ({classes.length})
             </h3>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
               {classes.map((cls) => {
                 const color = cls.color || '#A855F7';
                 return (
                   <div
                     key={cls.id}
-                    className="p-3 rounded-xl border flex items-center justify-between shadow-sm"
+                    className="p-3.5 rounded-xl border flex items-center justify-between shadow-sm"
                     style={{
                       backgroundColor: `${color}20`,
                       borderColor: `${color}60`,
                     }}
                   >
-                    <span className="font-extrabold text-xs" style={{ color: color }}>
-                      {cls.name}
-                    </span>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-950/60 text-slate-300">
-                      {color}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
+                      <span className="font-extrabold text-xs" style={{ color: color }}>
+                        {cls.name}
+                      </span>
+                    </div>
+
+                    <button
+                      onClick={() => openEditClassModal(cls)}
+                      className="px-2.5 py-1 bg-slate-950/80 hover:bg-slate-900 text-slate-200 border border-slate-700/80 rounded-lg text-[10px] font-extrabold flex items-center gap-1 transition-all"
+                    >
+                      <Edit3 className="w-3 h-3 text-amber-400" />
+                      Edit
+                    </button>
                   </div>
                 );
               })}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT MEMBER MODAL */}
+      {editingMember && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-purple-500/40 rounded-2xl p-6 max-w-lg w-full space-y-5 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <Edit3 className="w-5 h-5 text-purple-400" />
+                <h3 className="text-lg font-black text-slate-100">
+                  Edit Guild Member ({editingMember.name})
+                </h3>
+              </div>
+              <button
+                onClick={() => setEditingMember(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateMember} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-300 block">
+                  Member Name:
+                </label>
+                <input
+                  type="text"
+                  value={editMemberName}
+                  onChange={(e) => setEditMemberName(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-purple-500"
+                  required
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-300 block">
+                  Discord Tag:
+                </label>
+                <input
+                  type="text"
+                  value={editMemberDiscord}
+                  onChange={(e) => setEditMemberDiscord(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-purple-500"
+                  required
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-300 block">
+                  Assigned Guild Class:
+                </label>
+                <select
+                  value={editMemberClassId || ''}
+                  onChange={(e) => setEditMemberClassId(Number(e.target.value))}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-purple-500"
+                >
+                  <option value="">-- Select Class --</option>
+                  {classes.map((cls) => (
+                    <option key={cls.id} value={cls.id}>
+                      {cls.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-300 block">
+                  GvG / Spec Build Description:
+                </label>
+                <input
+                  type="text"
+                  value={editMemberBuild}
+                  onChange={(e) => setEditMemberBuild(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-purple-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingMember(null)}
+                  className="px-4 py-2.5 bg-slate-950 text-slate-400 hover:text-white rounded-xl text-xs font-bold border border-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="px-5 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-lg shadow-purple-600/20 flex items-center gap-1.5"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  Save Member Changes
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT CLASS MODAL */}
+      {editingClass && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-amber-500/40 rounded-2xl p-6 max-w-lg w-full space-y-5 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <Palette className="w-5 h-5 text-amber-400" />
+                <h3 className="text-lg font-black text-slate-100">
+                  Edit Guild Class ({editingClass.name})
+                </h3>
+              </div>
+              <button
+                onClick={() => setEditingClass(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateClass} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-300 block">
+                  Class Name:
+                </label>
+                <input
+                  type="text"
+                  value={editClassName}
+                  onChange={(e) => setEditClassName(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-purple-500"
+                  required
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-300 block">
+                  HEX Color Code:
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={editClassColor}
+                    onChange={(e) => setEditClassColor(e.target.value)}
+                    className="w-10 h-9 bg-slate-950 border border-slate-800 rounded-lg p-0.5 cursor-pointer"
+                  />
+                  <input
+                    type="text"
+                    value={editClassColor}
+                    onChange={(e) => setEditClassColor(e.target.value)}
+                    className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-100 focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+              </div>
+
+              {/* Color Presets Picker */}
+              <div className="space-y-2">
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Preset Class Color Swatches:
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  {COLOR_PRESETS.map((preset) => (
+                    <button
+                      key={preset.hex}
+                      type="button"
+                      onClick={() => setEditClassColor(preset.hex)}
+                      className="px-2.5 py-1 rounded-lg text-[11px] font-extrabold border transition-all flex items-center gap-1.5"
+                      style={{
+                        backgroundColor: `${preset.hex}25`,
+                        borderColor: preset.hex,
+                        color: preset.hex,
+                      }}
+                    >
+                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: preset.hex }} />
+                      {preset.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingClass(null)}
+                  className="px-4 py-2.5 bg-slate-950 text-slate-400 hover:text-white rounded-xl text-xs font-bold border border-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="px-5 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-xl text-xs font-black uppercase tracking-wider shadow-lg shadow-amber-500/20 flex items-center gap-1.5"
+                >
+                  <CheckCircle2 className="w-4 h-4 text-slate-950" />
+                  Save Class Changes
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

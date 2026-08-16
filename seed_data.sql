@@ -44,5 +44,5 @@ INSERT INTO items (id, name, description, is_repeatable) VALUES
 (2, 'Adventure Fragment', "Precious notes from your expedictions. Used to upgrade Titles or fuse into advanced Title items. Breaks down into 4x Traveler's Note", 1),
 (3, 'Adventure Journal', 'A compilation of insights from countless journeys. Used to upgrade Titles or fuse into advanced Title items. Breaks down into 4x Adventure Fragment.', 1),
 (4, 'Pioneer Certificate', 'Pioneer Certificate', 1),
-(5, 'Adv. Gem Box', 'Adv. Gem Box', 1),
-(6, 'Super Gem Box', 'Super Gem Box', 1),
+(5, 'Adv. Gem Choice Box', 'Adv. Gem Box', 1),
+(6, 'Super Gem Choice Box', 'Super Gem Box', 1);

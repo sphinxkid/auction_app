@@ -117,6 +117,104 @@ func CreateMemberHandler(db *gorm.DB) http.HandlerFunc {
 	}
 }
 
+type UpdateClassRequest struct {
+	Name  string `json:"name"`
+	Color string `json:"color"`
+}
+
+// UpdateClassHandler handles PUT/PATCH /api/v1/classes/{id}
+func UpdateClassHandler(db *gorm.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		classIDStr := chi.URLParam(r, "id")
+		classID, err := strconv.ParseUint(classIDStr, 10, 32)
+		if err != nil {
+			http.Error(w, `{"error":"invalid class id"}`, http.StatusBadRequest)
+			return
+		}
+
+		var gc models.GuildClass
+		if err := db.First(&gc, classID).Error; err != nil {
+			http.Error(w, `{"error":"guild class not found"}`, http.StatusNotFound)
+			return
+		}
+
+		var req UpdateClassRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+			return
+		}
+
+		if req.Name != "" {
+			gc.Name = req.Name
+		}
+		if req.Color != "" {
+			gc.Color = req.Color
+		}
+
+		if err := db.Save(&gc).Error; err != nil {
+			http.Error(w, `{"error":"failed to update class or name already exists"}`, http.StatusBadRequest)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(gc)
+	}
+}
+
+type UpdateMemberRequest struct {
+	Name      string `json:"name"`
+	DiscordID string `json:"discord_id"`
+	ClassID   *uint  `json:"class_id"`
+	GvGBuild  string `json:"gvg_build"`
+}
+
+// UpdateMemberHandler handles PUT/PATCH /api/v1/members/{id}
+func UpdateMemberHandler(db *gorm.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		memberIDStr := chi.URLParam(r, "id")
+		memberID, err := strconv.ParseUint(memberIDStr, 10, 32)
+		if err != nil {
+			http.Error(w, `{"error":"invalid member id"}`, http.StatusBadRequest)
+			return
+		}
+
+		var member models.GuildMember
+		if err := db.First(&member, memberID).Error; err != nil {
+			http.Error(w, `{"error":"guild member not found"}`, http.StatusNotFound)
+			return
+		}
+
+		var req UpdateMemberRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+			return
+		}
+
+		if req.Name != "" {
+			member.Name = req.Name
+		}
+		if req.DiscordID != "" {
+			member.DiscordID = req.DiscordID
+		}
+		if req.ClassID != nil {
+			member.ClassID = req.ClassID
+		}
+		member.GvGBuild = req.GvGBuild
+
+		if err := db.Save(&member).Error; err != nil {
+			http.Error(w, `{"error":"failed to update guild member or discord_id already exists"}`, http.StatusBadRequest)
+			return
+		}
+
+		_ = db.Preload("Class").First(&member, member.ID)
+
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(member)
+	}
+}
+
 // GetItemsHandler handles GET /api/v1/items
 func GetItemsHandler(db *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
