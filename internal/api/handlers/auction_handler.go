@@ -27,6 +27,42 @@ func GetMembersHandler(db *gorm.DB) http.HandlerFunc {
 	}
 }
 
+type CreateMemberRequest struct {
+	Name      string `json:"name"`
+	DiscordID string `json:"discord_id"`
+}
+
+// CreateMemberHandler handles POST /api/v1/members
+func CreateMemberHandler(db *gorm.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		var req CreateMemberRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+			return
+		}
+
+		if req.Name == "" || req.DiscordID == "" {
+			http.Error(w, `{"error":"name and discord_id are required"}`, http.StatusBadRequest)
+			return
+		}
+
+		member := models.GuildMember{
+			Name:      req.Name,
+			DiscordID: req.DiscordID,
+		}
+
+		if err := db.Create(&member).Error; err != nil {
+			http.Error(w, `{"error":"failed to create guild member or discord_id already exists"}`, http.StatusBadRequest)
+			return
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(member)
+	}
+}
+
 // GetItemsHandler handles GET /api/v1/items
 func GetItemsHandler(db *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -37,6 +73,44 @@ func GetItemsHandler(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 		_ = json.NewEncoder(w).Encode(items)
+	}
+}
+
+type CreateItemRequest struct {
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	IsRepeatable bool   `json:"is_repeatable"`
+}
+
+// CreateItemHandler handles POST /api/v1/items
+func CreateItemHandler(db *gorm.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		var req CreateItemRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+			return
+		}
+
+		if req.Name == "" {
+			http.Error(w, `{"error":"item name is required"}`, http.StatusBadRequest)
+			return
+		}
+
+		item := models.Item{
+			Name:         req.Name,
+			Description:  req.Description,
+			IsRepeatable: req.IsRepeatable,
+		}
+
+		if err := db.Create(&item).Error; err != nil {
+			http.Error(w, `{"error":"failed to create item"}`, http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(item)
 	}
 }
 

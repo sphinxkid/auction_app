@@ -52,6 +52,21 @@ func TestAPI_Step3EndpointsWorkflow(t *testing.T) {
 		t.Errorf("Expected 6 seeded members, got %d", len(members))
 	}
 
+	// 1b. Test POST /api/v1/members (Create new guild member)
+	newMemReq := handlers.CreateMemberRequest{
+		Name:      "Thrall",
+		DiscordID: "thrall#9999",
+	}
+	memBody, _ := json.Marshal(newMemReq)
+	postMemRes, err := http.Post(ts.URL+"/api/v1/members", "application/json", bytes.NewBuffer(memBody))
+	if err != nil {
+		t.Fatalf("POST /api/v1/members failed: %v", err)
+	}
+	if postMemRes.StatusCode != http.StatusCreated {
+		t.Fatalf("Expected 201 Created, got %d", postMemRes.StatusCode)
+	}
+	postMemRes.Body.Close()
+
 	// 2. Test GET /api/v1/items
 	res, err = http.Get(ts.URL + "/api/v1/items")
 	if err != nil {
@@ -66,6 +81,22 @@ func TestAPI_Step3EndpointsWorkflow(t *testing.T) {
 	if len(items) != 10 {
 		t.Errorf("Expected 10 seeded items, got %d", len(items))
 	}
+
+	// 2b. Test POST /api/v1/items (Create new raid item)
+	newItemReq := handlers.CreateItemRequest{
+		Name:         "Atiesh, Greatstaff of the Guardian",
+		Description:  "Legendary staff of Medivh.",
+		IsRepeatable: true,
+	}
+	itemBody, _ := json.Marshal(newItemReq)
+	postItemRes, err := http.Post(ts.URL+"/api/v1/items", "application/json", bytes.NewBuffer(itemBody))
+	if err != nil {
+		t.Fatalf("POST /api/v1/items failed: %v", err)
+	}
+	if postItemRes.StatusCode != http.StatusCreated {
+		t.Fatalf("Expected 201 Created, got %d", postItemRes.StatusCode)
+	}
+	postItemRes.Body.Close()
 
 	// 3. Test POST /api/v1/auctions (Create auction with 2 items)
 	createReq := handlers.CreateAuctionRequest{
