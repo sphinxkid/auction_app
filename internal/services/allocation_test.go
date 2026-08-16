@@ -282,4 +282,8 @@ func TestAllocationEngine_RankPreservationAndShift(t *testing.T) {
 	if memARanking.Rank != 2 {
 		t.Errorf("Expected Member A to be ranked 2 after 3 winners resolved, got rank %d", memARanking.Rank)
 	}
+
+	if memARanking.Status != models.QueueStatusWaiting {
+		t.Errorf("Expected Member A status to revert to WAITING after new auction resolution, got %s", memARanking.Status)
+	}
 }

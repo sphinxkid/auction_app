@@ -212,6 +212,7 @@ func (s *AllocationService) ResolveAuctionItem(auctionItemID uint) (*ItemResolut
 				ranking.LastWonAt = &t
 				winnersQueue = append(winnersQueue, ranking)
 			} else {
+				ranking.Status = models.QueueStatusWaiting
 				nonWinnersQueue = append(nonWinnersQueue, ranking)
 			}
 		}
