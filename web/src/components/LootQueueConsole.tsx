@@ -165,7 +165,9 @@ export const LootQueueConsole: React.FC = () => {
   const [queueRankings, setQueueRankings] = useState<QueueRanking[]>([]);
   const [historyItems, setHistoryItems] = useState<AllocationHistoryItem[]>([]);
   const [rankHistoryItems, setRankHistoryItems] = useState<ItemRankHistoryItem[]>([]);
-  const [rankHistoryFilterMemberId, setRankHistoryFilterMemberId] = useState<number | 'ALL'>('ALL');
+
+  // Selectable Player Highlight State for Item Rank Matrix
+  const [selectedHighlightMemberId, setSelectedHighlightMemberId] = useState<number | null>(null);
 
   // Resolution & Rank Shift tracking state
   const [lastResolutionResult, setLastResolutionResult] = useState<ItemResolutionResult | null>(null);
@@ -645,13 +647,26 @@ export const LootQueueConsole: React.FC = () => {
     (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
   );
 
-  const memberAuctionRankMap: { [memberId: number]: { [auctionId: number]: ItemRankHistoryItem } } = {};
+  // Map auctionId -> rank -> ItemRankHistoryItem for Rank-Indexed Row Matrix
+  const auctionRankToItemMap: { [auctionId: number]: { [rank: number]: ItemRankHistoryItem } } = {};
   rankHistoryItems.forEach((rh) => {
-    if (!memberAuctionRankMap[rh.member_id]) {
-      memberAuctionRankMap[rh.member_id] = {};
+    if (!auctionRankToItemMap[rh.auction_id]) {
+      auctionRankToItemMap[rh.auction_id] = {};
     }
-    memberAuctionRankMap[rh.member_id][rh.auction_id] = rh;
+    auctionRankToItemMap[rh.auction_id][rh.rank] = rh;
   });
+
+  // Map live queue rankings: rank -> QueueRanking
+  const liveRankToItemMap: { [rank: number]: QueueRanking } = {};
+  queueRankings.forEach((qr) => {
+    liveRankToItemMap[qr.rank] = qr;
+  });
+
+  // Determine max rank row index (1..maxRank)
+  const maxSnapshotRank = rankHistoryItems.reduce((max, r) => (r.rank > max ? r.rank : max), 0);
+  const maxLiveRank = queueRankings.reduce((max, r) => (r.rank > max ? r.rank : max), 0);
+  const maxRankCount = Math.max(1, maxSnapshotRank, maxLiveRank, members.length);
+  const rankRowNumbers = Array.from({ length: maxRankCount }, (_, i) => i + 1);
 
   const selectedItemObj = items.find((i) => i.id === selectedQueueItemId);
 
@@ -1519,7 +1534,7 @@ export const LootQueueConsole: React.FC = () => {
           {/* Section 2: Item Selector Pills */}
           <div className="bg-slate-900/60 rounded-2xl border border-slate-800 p-4 space-y-3">
             <span className="text-xs font-extrabold uppercase tracking-wider text-slate-400 block">
-              Select Raid Item to Display Left-to-Right Rank Progression Matrix:
+              Select Raid Item to Display Rank Progression Matrix:
             </span>
             <div className="flex flex-wrap gap-2">
               {items.map((item) => (
@@ -1565,15 +1580,52 @@ export const LootQueueConsole: React.FC = () => {
             </div>
           )}
 
-          {/* Section 3: Left-to-Right Chronological Rank Matrix Table */}
+          {/* Section 3: Player Selection / Highlight Toolbar */}
+          <div className="bg-slate-900/80 rounded-2xl border border-slate-800 p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-extrabold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5" />
+                Select Player to Highlight Rank Progression Across Timeline:
+              </span>
+              {selectedHighlightMemberId && (
+                <button
+                  onClick={() => setSelectedHighlightMemberId(null)}
+                  className="text-[11px] font-bold text-rose-400 hover:text-rose-300 flex items-center gap-1"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  Clear Highlight
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {members.map((mem) => {
+                const isSelected = selectedHighlightMemberId === mem.id;
+                return (
+                  <button
+                    key={mem.id}
+                    onClick={() => setSelectedHighlightMemberId(isSelected ? null : mem.id)}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                      isSelected
+                        ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/30 scale-105 border border-amber-400 font-extrabold'
+                        : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
+                    }`}
+                  >
+                    {isSelected ? '★ ' : ''}{mem.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Section 4: Rank-Indexed Matrix Table (Ordered Ascendingly 1..N) */}
           <div className="bg-slate-900/80 rounded-2xl border border-slate-800 overflow-hidden shadow-xl space-y-3">
             <div className="p-4 bg-slate-900 border-b border-slate-800 flex items-center justify-between">
               <h3 className="text-xs font-black uppercase tracking-wider text-slate-200 flex items-center gap-2">
                 <Layers className="w-4 h-4 text-purple-400" />
-                Rank Progression Matrix (Auction Date Order: Left → Right)
+                Auction Priority Rank Matrix (Ordered Ascendingly 1..N)
               </h3>
               <span className="text-[11px] text-slate-400">
-                Showing rank snapshots chronologically per raid auction
+                Click any player name to highlight rank movements across all auctions
               </span>
             </div>
 
@@ -1581,13 +1633,13 @@ export const LootQueueConsole: React.FC = () => {
               <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
                 <thead>
                   <tr className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase">
-                    <th className="py-3.5 px-4 sticky left-0 bg-slate-950 z-10 border-r border-slate-800">
-                      Guild Member
+                    <th className="py-3.5 px-4 sticky left-0 bg-slate-950 z-10 border-r border-slate-800 text-center w-24">
+                      Priority Rank
                     </th>
                     {chronologicalAuctions.length > 0 ? (
                       chronologicalAuctions.map((auc) => (
-                        <th key={auc.id} className="py-3.5 px-6 border-r border-slate-800 text-center min-w-[160px]">
-                          <span className="text-slate-200 block truncate max-w-[150px]">{auc.title}</span>
+                        <th key={auc.id} className="py-3.5 px-6 border-r border-slate-800 text-center min-w-[170px]">
+                          <span className="text-slate-200 block truncate max-w-[160px]">{auc.title}</span>
                           <span className="text-[10px] text-purple-400 font-mono font-normal block">
                             {new Date(auc.date).toLocaleDateString()}
                           </span>
@@ -1598,77 +1650,103 @@ export const LootQueueConsole: React.FC = () => {
                         No past auctions recorded yet for this item
                       </th>
                     )}
-                    <th className="py-3.5 px-4 text-center bg-slate-950">Current Live Rank</th>
+                    <th className="py-3.5 px-4 text-center bg-slate-950 min-w-[170px]">Current Live Rank</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                  {members.map((mem) => {
-                    const currentRankObj = queueRankings.find((r) => r.member_id === mem.id);
+                  {rankRowNumbers.map((rankNum) => (
+                    <tr key={rankNum} className="hover:bg-slate-800/40 transition-colors">
+                      {/* Priority Rank Header (Sticky Left Column) */}
+                      <td className="py-3.5 px-4 font-black text-amber-400 sticky left-0 bg-slate-900 border-r border-slate-800 text-center">
+                        #{rankNum}
+                      </td>
 
-                    return (
-                      <tr key={mem.id} className="hover:bg-slate-800/40 transition-colors">
-                        {/* Member Name (Sticky Left Column) */}
-                        <td className="py-3 px-4 font-semibold text-slate-100 sticky left-0 bg-slate-900 border-r border-slate-800">
-                          <span className="block">{mem.name}</span>
-                          <span className="text-[10px] text-slate-500 font-mono block">{mem.discord_id}</span>
-                        </td>
-
-                        {/* Left-to-Right Auction Rank Columns */}
-                        {chronologicalAuctions.length > 0 ? (
-                          chronologicalAuctions.map((auc) => {
-                            const snapshot = memberAuctionRankMap[mem.id]?.[auc.id];
-                            const isWinnerInAuction = historyItems.some(
-                              (h) => h.member_id === mem.id && h.auction_id === auc.id
-                            );
-
+                      {/* Auction Snapshot Columns */}
+                      {chronologicalAuctions.length > 0 ? (
+                        chronologicalAuctions.map((auc) => {
+                          const snapshot = auctionRankToItemMap[auc.id]?.[rankNum];
+                          if (!snapshot) {
                             return (
-                              <td key={auc.id} className="py-3 px-6 border-r border-slate-800/60 text-center">
-                                {snapshot ? (
-                                  isWinnerInAuction ? (
-                                    <span className="inline-flex items-center gap-1 text-[11px] font-extrabold px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm">
-                                      <Trophy className="w-3.5 h-3.5 text-amber-400" />
-                                      Winner (Rank #{snapshot.rank})
-                                    </span>
-                                  ) : (
-                                    <span
-                                      className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded ${
-                                        snapshot.status === 'PAST_WINNER'
-                                          ? 'bg-emerald-950/40 text-emerald-300 border border-emerald-500/20'
-                                          : 'bg-purple-950/40 text-purple-300 border border-purple-500/20'
-                                      }`}
-                                    >
-                                      #{snapshot.rank} ({snapshot.status})
-                                    </span>
-                                  )
-                                ) : (
-                                  <span className="text-slate-600 font-mono">—</span>
-                                )}
+                              <td key={auc.id} className="py-3.5 px-6 border-r border-slate-800/60 text-center text-slate-600 font-mono">
+                                —
                               </td>
                             );
-                          })
-                        ) : (
-                          <td colSpan={1} className="py-3 px-6 text-center text-slate-600">
-                            —
-                          </td>
-                        )}
+                          }
 
-                        {/* Current Live Rank Column */}
-                        <td className="py-3 px-4 text-center font-extrabold">
-                          {currentRankObj ? (
-                            <span className="text-amber-400 text-sm">#{currentRankObj.rank}</span>
-                          ) : (
-                            <span className="text-slate-600 font-normal">Unranked</span>
-                          )}
+                          const isWinner = historyItems.some(
+                            (h) => h.member_id === snapshot.member_id && h.auction_id === auc.id
+                          );
+                          const isHighlighted = selectedHighlightMemberId === snapshot.member_id;
+
+                          return (
+                            <td key={auc.id} className="py-2.5 px-4 border-r border-slate-800/60 text-center">
+                              <button
+                                onClick={() =>
+                                  setSelectedHighlightMemberId(isHighlighted ? null : snapshot.member_id)
+                                }
+                                className={`w-full py-1.5 px-3 rounded-xl border text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all ${
+                                  isHighlighted
+                                    ? 'bg-gradient-to-r from-amber-500/30 via-purple-600/30 to-amber-500/30 border-amber-400 text-amber-200 shadow-lg shadow-amber-500/20 scale-105 ring-2 ring-amber-400/50'
+                                    : isWinner
+                                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:border-emerald-400'
+                                    : 'bg-slate-950/80 text-slate-200 border-slate-800 hover:border-purple-500/40'
+                                }`}
+                              >
+                                {isWinner ? (
+                                  <Trophy className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                ) : (
+                                  <span className="text-[10px] text-slate-400 font-mono">#{snapshot.rank}</span>
+                                )}
+                                <span>{snapshot.member_name}</span>
+                                {isHighlighted && <Sparkles className="w-3 h-3 text-amber-400" />}
+                              </button>
+                            </td>
+                          );
+                        })
+                      ) : (
+                        <td colSpan={1} className="py-3.5 px-6 text-center text-slate-600">
+                          —
                         </td>
-                      </tr>
-                    );
-                  })}
+                      )}
+
+                      {/* Current Live Rank Column */}
+                      {(() => {
+                        const liveRanking = liveRankToItemMap[rankNum];
+                        if (!liveRanking) {
+                          return <td className="py-3.5 px-4 text-center text-slate-600 font-mono">—</td>;
+                        }
+
+                        const isHighlighted = selectedHighlightMemberId === liveRanking.member_id;
+
+                        return (
+                          <td className="py-2.5 px-4 text-center">
+                            <button
+                              onClick={() =>
+                                setSelectedHighlightMemberId(isHighlighted ? null : liveRanking.member_id)
+                              }
+                              className={`w-full py-1.5 px-3 rounded-xl border text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all ${
+                                isHighlighted
+                                  ? 'bg-gradient-to-r from-amber-500/30 via-purple-600/30 to-amber-500/30 border-amber-400 text-amber-200 shadow-lg shadow-amber-500/20 scale-105 ring-2 ring-amber-400/50'
+                                  : liveRanking.status === 'PAST_WINNER'
+                                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:border-emerald-400'
+                                  : 'bg-purple-950/40 text-purple-300 border-purple-500/30 hover:border-purple-400'
+                              }`}
+                            >
+                              <span className="text-[10px] font-mono">#{liveRanking.rank}</span>
+                              <span>{liveRanking.member_name}</span>
+                              {isHighlighted && <Sparkles className="w-3 h-3 text-amber-400" />}
+                            </button>
+                          </td>
+                        );
+                      })()}
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
           </div>
 
-          {/* Section 4: Raid Catalog Items List Table */}
+          {/* Section 5: Raid Catalog Items List Table */}
           <div className="space-y-3 pt-6 border-t border-slate-800">
             <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-2">
               <Package className="w-4 h-4 text-purple-400" />

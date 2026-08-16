@@ -13,28 +13,32 @@ func SeedDatabase(db *gorm.DB) error {
 	log.Println("Checking database seed status...")
 
 	// 1. Seed Guild Members
-	var memberCount int64
-	if err := db.Model(&models.GuildMember{}).Count(&memberCount).Error; err != nil {
-		return err
+	members := []models.GuildMember{
+		{Name: "Aeloria", DiscordID: "aeloria#0001"},
+		{Name: "Vorn", DiscordID: "vorn#0002"},
+		{Name: "Kaelen", DiscordID: "kaelen#0003"},
+		{Name: "Sylas", DiscordID: "sylas#0004"},
+		{Name: "Morrigan", DiscordID: "morrigan#0005"},
+		{Name: "Thalor", DiscordID: "thalor#0006"},
+		{Name: "Illidan", DiscordID: "illidan#0007"},
+		{Name: "Arthas", DiscordID: "arthas#0008"},
+		{Name: "Jaina", DiscordID: "jaina#0009"},
+		{Name: "Sylvanas", DiscordID: "sylvanas#0010"},
+		{Name: "Tyrande", DiscordID: "tyrande#0011"},
+		{Name: "Malfurion", DiscordID: "malfurion#0012"},
+		{Name: "Vol'jin", DiscordID: "voljin#0013"},
+		{Name: "Baine", DiscordID: "baine#0014"},
+		{Name: "Uther", DiscordID: "uther#0015"},
+		{Name: "Khadgar", DiscordID: "khadgar#0016"},
 	}
 
-	if memberCount == 0 {
-		members := []models.GuildMember{
-			{Name: "Aeloria", DiscordID: "aeloria#0001"},
-			{Name: "Vorn", DiscordID: "vorn#0002"},
-			{Name: "Kaelen", DiscordID: "kaelen#0003"},
-			{Name: "Sylas", DiscordID: "sylas#0004"},
-			{Name: "Morrigan", DiscordID: "morrigan#0005"},
-			{Name: "Thalor", DiscordID: "thalor#0006"},
-		}
-
-		if err := db.Create(&members).Error; err != nil {
+	for _, m := range members {
+		var memberRecord models.GuildMember
+		if err := db.Where("discord_id = ?", m.DiscordID).FirstOrCreate(&memberRecord, m).Error; err != nil {
 			return err
 		}
-		log.Printf("Seeded %d guild members.", len(members))
-	} else {
-		log.Printf("Skipped member seeding: %d members already exist.", memberCount)
 	}
+	log.Printf("Verified/Seeded 16 guild members in roster.")
 
 	// 2. Seed Repeatable Raid Items
 	items := []models.Item{

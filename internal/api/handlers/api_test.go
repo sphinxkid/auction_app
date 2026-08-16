@@ -48,8 +48,8 @@ func TestAPI_Step3EndpointsWorkflow(t *testing.T) {
 	var members []models.GuildMember
 	_ = json.NewDecoder(res.Body).Decode(&members)
 	res.Body.Close()
-	if len(members) != 6 {
-		t.Errorf("Expected 6 seeded members, got %d", len(members))
+	if len(members) != 16 {
+		t.Errorf("Expected 16 seeded members, got %d", len(members))
 	}
 
 	// 1b. Test POST /api/v1/members (Create new guild member)

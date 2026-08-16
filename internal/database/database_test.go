@@ -38,8 +38,8 @@ func TestInitDBAndSeeder(t *testing.T) {
 	if err := db.Model(&models.GuildMember{}).Count(&memberCount).Error; err != nil {
 		t.Fatalf("Failed to count members: %v", err)
 	}
-	if memberCount != 6 {
-		t.Errorf("Expected 6 seeded members, got %d", memberCount)
+	if memberCount != 16 {
+		t.Errorf("Expected 16 seeded members, got %d", memberCount)
 	}
 
 	var itemCount int64
