@@ -46,7 +46,7 @@ func TestInitDBAndSeeder(t *testing.T) {
 	if err := db.Model(&models.Item{}).Count(&itemCount).Error; err != nil {
 		t.Fatalf("Failed to count items: %v", err)
 	}
-	if itemCount != 2 {
-		t.Errorf("Expected 2 seeded items, got %d", itemCount)
+	if itemCount != 10 {
+		t.Errorf("Expected 10 seeded items, got %d", itemCount)
 	}
 }

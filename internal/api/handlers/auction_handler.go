@@ -87,8 +87,8 @@ func CreateAuctionHandler(db *gorm.DB) http.HandlerFunc {
 
 			for _, itemReq := range req.Items {
 				qty := itemReq.Quantity
-				if qty <= 0 {
-					qty = 1
+				if qty < 0 {
+					qty = 0
 				}
 
 				auctionItem := models.AuctionItem{
@@ -238,6 +238,62 @@ func SubmitAuctionItemIntentHandler(db *gorm.DB) http.HandlerFunc {
 	}
 }
 
+// UpdateAuctionItemQuantityRequest payload
+type UpdateAuctionItemQuantityRequest struct {
+	Quantity int `json:"quantity"`
+}
+
+// UpdateAuctionItemQuantityHandler handles PATCH /api/v1/auction-items/{id}/quantity
+func UpdateAuctionItemQuantityHandler(db *gorm.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		auctionItemIDStr := chi.URLParam(r, "id")
+		auctionItemID, err := strconv.ParseUint(auctionItemIDStr, 10, 32)
+		if err != nil {
+			http.Error(w, `{"error":"invalid auction item id"}`, http.StatusBadRequest)
+			return
+		}
+
+		var req UpdateAuctionItemQuantityRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid request payload"}`, http.StatusBadRequest)
+			return
+		}
+
+		if req.Quantity < 0 {
+			http.Error(w, `{"error":"quantity cannot be negative"}`, http.StatusBadRequest)
+			return
+		}
+
+		var auctionItem models.AuctionItem
+		if err := db.First(&auctionItem, auctionItemID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				http.Error(w, `{"error":"auction item not found"}`, http.StatusNotFound)
+				return
+			}
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
+
+		if auctionItem.Status == models.AuctionItemStatusResolved {
+			http.Error(w, `{"error":"cannot update quantity of a resolved auction item"}`, http.StatusConflict)
+			return
+		}
+
+		if err := db.Model(&auctionItem).Update("quantity", req.Quantity).Error; err != nil {
+			http.Error(w, `{"error":"failed to update auction item quantity"}`, http.StatusInternalServerError)
+			return
+		}
+
+		// Reload updated record with relationships
+		_ = db.Preload("Item").Preload("Intents.Member").First(&auctionItem, auctionItemID)
+
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(auctionItem)
+	}
+}
+
 // ResolveAuctionItemHandler handles POST /api/v1/auction-items/{id}/resolve
 func ResolveAuctionItemHandler(db *gorm.DB) http.HandlerFunc {
 	service := services.NewAllocationService(db)
@@ -270,3 +326,4 @@ func ResolveAuctionItemHandler(db *gorm.DB) http.HandlerFunc {
 		_ = json.NewEncoder(w).Encode(result)
 	}
 }
+

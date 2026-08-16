@@ -61,8 +61,8 @@ func (s *AllocationService) ResolveAuctionItem(auctionItemID uint) (*ItemResolut
 		}
 
 		quantity := auctionItem.Quantity
-		if quantity <= 0 {
-			quantity = 1
+		if quantity < 0 {
+			quantity = 0
 		}
 
 		itemID := auctionItem.ItemID

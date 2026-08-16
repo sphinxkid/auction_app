@@ -57,7 +57,8 @@ func NewServer(cfg *config.Config, db *gorm.DB) *Server {
 		r.Post("/auctions", handlers.CreateAuctionHandler(db))
 		r.Get("/auctions/active", handlers.GetActiveAuctionHandler(db))
 
-		// AuctionItem Intents & Resolution
+		// AuctionItem Quantity, Intents & Resolution
+		r.Patch("/auction-items/{id}/quantity", handlers.UpdateAuctionItemQuantityHandler(db))
 		r.Post("/auction-items/{id}/intents", handlers.SubmitAuctionItemIntentHandler(db))
 		r.Post("/auction-items/{id}/resolve", handlers.ResolveAuctionItemHandler(db))
 

@@ -63,8 +63,8 @@ func TestAPI_Step3EndpointsWorkflow(t *testing.T) {
 	var items []models.Item
 	_ = json.NewDecoder(res.Body).Decode(&items)
 	res.Body.Close()
-	if len(items) != 2 {
-		t.Errorf("Expected 2 seeded items, got %d", len(items))
+	if len(items) != 10 {
+		t.Errorf("Expected 10 seeded items, got %d", len(items))
 	}
 
 	// 3. Test POST /api/v1/auctions (Create auction with 2 items)
@@ -110,7 +110,27 @@ func TestAPI_Step3EndpointsWorkflow(t *testing.T) {
 		t.Errorf("Expected active auction ID %d, got %d", createdAuction.ID, activeAuction.ID)
 	}
 
-	// 5. Test POST /api/v1/auction-items/:id/intents (Submit Intent to Buy)
+	// 5. Test PATCH /api/v1/auction-items/:id/quantity (Update Auction Item Quantity)
+	updateQtyReq := handlers.UpdateAuctionItemQuantityRequest{Quantity: 5}
+	body, _ = json.Marshal(updateQtyReq)
+
+	req, _ := http.NewRequest(http.MethodPatch, ts.URL+"/api/v1/auction-items/"+strconvFormat(auctionItemA.ID)+"/quantity", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PATCH quantity failed: %v", err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK for quantity update, got %d", res.StatusCode)
+	}
+	var updatedItemA models.AuctionItem
+	_ = json.NewDecoder(res.Body).Decode(&updatedItemA)
+	res.Body.Close()
+	if updatedItemA.Quantity != 5 {
+		t.Errorf("Expected quantity 5, got %d", updatedItemA.Quantity)
+	}
+
+	// 6. Test POST /api/v1/auction-items/:id/intents (Submit Intent to Buy)
 	intentReq := handlers.SubmitItemIntentRequest{MemberID: members[0].ID} // Aeloria
 	body, _ = json.Marshal(intentReq)
 

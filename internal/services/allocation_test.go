@@ -145,3 +145,50 @@ func TestAllocationEngine_PerItemResolutionAndAutoCompletion(t *testing.T) {
 		t.Errorf("DB Auction status expected RESOLVED, got %s", updatedAuction.Status)
 	}
 }
+
+func TestAllocationEngine_ZeroQuantityResolution(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test_zero_qty.db")
+
+	cfg := &config.Config{
+		ServerAddress: "127.0.0.1:8080",
+		DBDriver:      "sqlite",
+		DBPath:        dbPath,
+		Environment:   "test",
+	}
+
+	db, err := database.InitDB(cfg)
+	if err != nil {
+		t.Fatalf("InitDB failed: %v", err)
+	}
+
+	item := models.Item{Name: "Thunderfury", Description: "Legendary sword", IsRepeatable: true}
+	_ = db.Create(&item)
+
+	auction := models.Auction{Title: "Zero Qty Raid", Status: models.AuctionStatusActive, AuctionDate: time.Now().UTC()}
+	_ = db.Create(&auction)
+
+	auctionItem := models.AuctionItem{
+		AuctionID: auction.ID,
+		ItemID:    item.ID,
+		Quantity:  0, // Zero Quantity
+		Status:    models.AuctionItemStatusPending,
+	}
+	_ = db.Create(&auctionItem)
+
+	service := services.NewAllocationService(db)
+	res, err := service.ResolveAuctionItem(auctionItem.ID)
+	if err != nil {
+		t.Fatalf("ResolveAuctionItem failed for 0 qty: %v", err)
+	}
+
+	if res.AllocatedQuantity != 0 {
+		t.Errorf("Expected 0 allocated quantity, got %d", res.AllocatedQuantity)
+	}
+	if res.AuctionItemStatus != models.AuctionItemStatusResolved {
+		t.Errorf("Expected item status RESOLVED, got %s", res.AuctionItemStatus)
+	}
+	if !res.IsAuctionFullyResolved {
+		t.Errorf("Expected parent auction to be fully resolved")
+	}
+}
