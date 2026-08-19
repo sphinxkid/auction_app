@@ -171,33 +171,83 @@ func (s *AllocationService) ResolveAuctionItem(auctionItemID uint) (*ItemResolut
 		candidates := append([]*models.ItemQueueRanking{}, waitingCandidates...)
 		candidates = append(candidates, winnerCandidates...)
 
-		// 6. Determine Winners & Create Allocations
-		allocatedCount := quantity
-		if len(candidates) < quantity {
-			allocatedCount = len(candidates)
+		// 6. Multi-Round Fair Allocation Engine:
+		// Round 1: Give 1 unit to each candidate member in priority order (up to available drop quantity).
+		// Round 2+: Distribute excess items to members requesting > 1 unit, round-robin in priority order (1 additional unit per pass).
+		requestedQtyMap := make(map[uint]int)
+		for _, intent := range intents {
+			qty := intent.Quantity
+			if qty <= 0 {
+				qty = 1
+			}
+			requestedQtyMap[intent.MemberID] = qty
 		}
 
-		winningCandidates := candidates[:allocatedCount]
-		winnerSet := make(map[uint]bool)
-		for _, w := range winningCandidates {
-			winnerSet[w.MemberID] = true
+		allocatedMap := make(map[uint]int)
+		remainingRequestMap := make(map[uint]int)
+		for _, c := range candidates {
+			allocatedMap[c.MemberID] = 0
+			remainingRequestMap[c.MemberID] = requestedQtyMap[c.MemberID]
+		}
+
+		availableDrop := quantity
+
+		// Round 1: Give 1 item to each candidate in priority order
+		for _, c := range candidates {
+			if availableDrop <= 0 {
+				break
+			}
+			if remainingRequestMap[c.MemberID] > 0 {
+				allocatedMap[c.MemberID]++
+				remainingRequestMap[c.MemberID]--
+				availableDrop--
+			}
+		}
+
+		// Round 2+: Distribute excess items to members requesting > 1 unit, round robin in priority order
+		for availableDrop > 0 {
+			allocatedInThisPass := 0
+			for _, c := range candidates {
+				if availableDrop <= 0 {
+					break
+				}
+				if remainingRequestMap[c.MemberID] > 0 {
+					allocatedMap[c.MemberID]++
+					remainingRequestMap[c.MemberID]--
+					availableDrop--
+					allocatedInThisPass++
+				}
+			}
+			if allocatedInThisPass == 0 {
+				break
+			}
 		}
 
 		now := time.Now().UTC()
 
+		// Save Allocation History & Track Winners
+		winnerSet := make(map[uint]bool)
 		allocations := []models.AllocationHistory{}
-		for _, winner := range winningCandidates {
-			alloc := models.AllocationHistory{
-				AuctionID:         auctionID,
-				ItemID:            itemID,
-				MemberID:          winner.MemberID,
-				AllocatedQuantity: 1,
-				AllocatedAt:       now,
+		totalItemsAllocated := 0
+
+		for _, c := range candidates {
+			allocQty := allocatedMap[c.MemberID]
+			if allocQty > 0 {
+				winnerSet[c.MemberID] = true
+				totalItemsAllocated += allocQty
+
+				alloc := models.AllocationHistory{
+					AuctionID:         auctionID,
+					ItemID:            itemID,
+					MemberID:          c.MemberID,
+					AllocatedQuantity: allocQty,
+					AllocatedAt:       now,
+				}
+				if err := tx.Create(&alloc).Error; err != nil {
+					return fmt.Errorf("failed to save allocation history: %w", err)
+				}
+				allocations = append(allocations, alloc)
 			}
-			if err := tx.Create(&alloc).Error; err != nil {
-				return fmt.Errorf("failed to save allocation history: %w", err)
-			}
-			allocations = append(allocations, alloc)
 		}
 
 		// 7. Update Winner Statuses & Re-Index Queue Ranks to Preserve Relative Order
@@ -281,7 +331,7 @@ func (s *AllocationService) ResolveAuctionItem(auctionItemID uint) (*ItemResolut
 			AuctionID:              auctionID,
 			AuctionItemID:          auctionItemID,
 			ItemID:                 itemID,
-			AllocatedQuantity:      len(winningCandidates),
+			AllocatedQuantity:      totalItemsAllocated,
 			AuctionItemStatus:      models.AuctionItemStatusResolved,
 			AuctionStatus:          auctionStatus,
 			IsAuctionFullyResolved: isFullyResolved,

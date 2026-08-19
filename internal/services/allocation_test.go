@@ -299,3 +299,97 @@ func TestAllocationEngine_RankPreservationAndShift(t *testing.T) {
 		t.Errorf("Expected Member A status to revert to WAITING after new auction resolution, got %s", memARanking.Status)
 	}
 }
+
+func TestAllocationEngine_MultiRoundFairAllocation(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test_multiround.db")
+
+	cfg := &config.Config{
+		ServerAddress: "127.0.0.1:8080",
+		DBDriver:      "sqlite",
+		DBPath:        dbPath,
+		Environment:   "test",
+	}
+
+	db, err := database.InitDB(cfg)
+	if err != nil {
+		t.Fatalf("InitDB failed: %v", err)
+	}
+
+	// Create 5 guild members
+	members := make([]models.GuildMember, 5)
+	for i := 0; i < 5; i++ {
+		members[i] = models.GuildMember{
+			Name:      fmt.Sprintf("Member %d", i+1),
+			DiscordID: fmt.Sprintf("discord_%d", i+1),
+		}
+	}
+	db.Create(&members)
+
+	item := models.Item{Name: "Adv. Gem Choice Box", Description: "Adv. Gem Box", IsRepeatable: true}
+	db.Create(&item)
+
+	// Create 5 pre-seeded queue rankings
+	now := time.Now().UTC()
+	for i := 0; i < 5; i++ {
+		db.Create(&models.ItemQueueRanking{
+			ItemID:    item.ID,
+			MemberID:  members[i].ID,
+			Rank:      i + 1,
+			Status:    models.QueueStatusWaiting,
+			UpdatedAt: now,
+		})
+	}
+
+	// Create auction drop with Quantity = 10
+	auction := models.Auction{Title: "Raid Night", Status: models.AuctionStatusActive, AuctionDate: now}
+	db.Create(&auction)
+
+	auctionItem := models.AuctionItem{
+		AuctionID: auction.ID,
+		ItemID:    item.ID,
+		Quantity:  10,
+		Status:    models.AuctionItemStatusPending,
+	}
+	db.Create(&auctionItem)
+
+	// Submit intents: Member 1 requests 3, Member 2 requests 2, Members 3-5 request 1
+	requestedQty := []int{3, 2, 1, 1, 1}
+	for i, m := range members {
+		db.Create(&models.IntentToBuy{
+			AuctionItemID: auctionItem.ID,
+			MemberID:      m.ID,
+			Quantity:      requestedQty[i],
+			SubmittedAt:   now,
+		})
+	}
+
+	service := services.NewAllocationService(db)
+	res, err := service.ResolveAuctionItem(auctionItem.ID)
+	if err != nil {
+		t.Fatalf("ResolveAuctionItem failed: %v", err)
+	}
+
+	// Total items allocated should be 3 + 2 + 1 + 1 + 1 = 8 items
+	if res.AllocatedQuantity != 8 {
+		t.Fatalf("Expected 8 allocated items total, got %d", res.AllocatedQuantity)
+	}
+
+	// Verify exact allocation quantities per member
+	expectedMap := map[uint]int{
+		members[0].ID: 3,
+		members[1].ID: 2,
+		members[2].ID: 1,
+		members[3].ID: 1,
+		members[4].ID: 1,
+	}
+
+	for _, alloc := range res.Allocations {
+		expected, exists := expectedMap[alloc.MemberID]
+		if !exists {
+			t.Errorf("Unexpected allocation for member %d", alloc.MemberID)
+		} else if alloc.AllocatedQuantity != expected {
+			t.Errorf("Expected member %d to be allocated %d items, got %d", alloc.MemberID, expected, alloc.AllocatedQuantity)
+		}
+	}
+}
